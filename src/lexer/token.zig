@@ -14,15 +14,23 @@ const Type = enum {
     Identifier,
     Integer,
 
-    // Symbols
+    // Operators
     Assign,
     Plus,
+    Minus,
+    Bang,
+    Asterisk,
+    Slash,
+    LessThan,
+    GreaterThan,
+
+    // Symbols
     Comma,
     SemiColon,
-    LParen,
-    RParen,
-    LBrace,
-    RBrace,
+    LeftParen,
+    RightParen,
+    LeftBrace,
+    RightBrace,
 
     // Keywords
     Function,

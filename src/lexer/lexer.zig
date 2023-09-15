@@ -26,13 +26,21 @@ pub fn nextToken(self: *Lexer) Token {
     var token: Token = switch (self.ch) {
         '=' => .{ .type = .Assign, .literal = "=" },
         '+' => .{ .type = .Plus, .literal = "+" },
+        '-' => .{ .type = .Minus, .literal = "-" },
+        '*' => .{ .type = .Asterisk, .literal = "*" },
+        '/' => .{ .type = .Slash, .literal = "/" },
+        '!' => .{ .type = .Bang, .literal = "!" },
+        '<' => .{ .type = .LessThan, .literal = "<" },
+        '>' => .{ .type = .GreaterThan, .literal = ">" },
+
         ',' => .{ .type = .Comma, .literal = "," },
         ';' => .{ .type = .SemiColon, .literal = ";" },
-        '(' => .{ .type = .LParen, .literal = "(" },
-        ')' => .{ .type = .RParen, .literal = ")" },
-        '{' => .{ .type = .LBrace, .literal = "{" },
-        '}' => .{ .type = .RBrace, .literal = "}" },
+        '(' => .{ .type = .LeftParen, .literal = "(" },
+        ')' => .{ .type = .RightParen, .literal = ")" },
+        '{' => .{ .type = .LeftBrace, .literal = "{" },
+        '}' => .{ .type = .RightBrace, .literal = "}" },
         0 => .{ .type = .Eof, .literal = "" },
+
         'a'...'z', 'A'...'Z', '_' => {
             const literal = self.readIdentifier();
             return .{
@@ -43,6 +51,7 @@ pub fn nextToken(self: *Lexer) Token {
         '0'...'9' => {
             return .{ .type = .Integer, .literal = self.readNumber() };
         },
+
         else => .{ .type = .Illegal, .literal = "" },
     };
 
@@ -87,28 +96,7 @@ fn skipWhiteSpace(self: *Lexer) void {
     }
 }
 
-test "1.3 The Lexer - Test 1" {
-    const input = "=+(){},;";
-
-    const expected = [_]Token{
-        .{ .type = .Assign, .literal = "=" },
-        .{ .type = .Plus, .literal = "+" },
-        .{ .type = .LParen, .literal = "(" },
-        .{ .type = .RParen, .literal = ")" },
-        .{ .type = .LBrace, .literal = "{" },
-        .{ .type = .RBrace, .literal = "}" },
-        .{ .type = .Comma, .literal = "," },
-        .{ .type = .SemiColon, .literal = ";" },
-    };
-
-    var lexer = Lexer.init(input);
-
-    for (expected) |token| {
-        try std.testing.expectEqualDeep(token, lexer.nextToken());
-    }
-}
-
-test "1.3 The Lexer - Test 2" {
+test "Lexer" {
     const input =
         \\let five = 5;
         \\let ten = 10;
@@ -116,6 +104,8 @@ test "1.3 The Lexer - Test 2" {
         \\  x + y;
         \\};
         \\let result = add(five, ten);
+        \\!-/*5;
+        \\5 < 10 > 5;
     ;
 
     const expected = [_]Token{
@@ -133,18 +123,41 @@ test "1.3 The Lexer - Test 2" {
         .{ .type = .Identifier, .literal = "add" },
         .{ .type = .Assign, .literal = "=" },
         .{ .type = .Function, .literal = "fn" },
-        .{ .type = .LParen, .literal = "(" },
+        .{ .type = .LeftParen, .literal = "(" },
         .{ .type = .Identifier, .literal = "x" },
         .{ .type = .Comma, .literal = "," },
         .{ .type = .Identifier, .literal = "y" },
-        .{ .type = .RParen, .literal = ")" },
-        .{ .type = .LBrace, .literal = "{" },
+        .{ .type = .RightParen, .literal = ")" },
+        .{ .type = .LeftBrace, .literal = "{" },
         .{ .type = .Identifier, .literal = "x" },
         .{ .type = .Plus, .literal = "+" },
         .{ .type = .Identifier, .literal = "y" },
         .{ .type = .SemiColon, .literal = ";" },
-        .{ .type = .RBrace, .literal = "}" },
+        .{ .type = .RightBrace, .literal = "}" },
         .{ .type = .SemiColon, .literal = ";" },
+        .{ .type = .Let, .literal = "let" },
+        .{ .type = .Identifier, .literal = "result" },
+        .{ .type = .Assign, .literal = "=" },
+        .{ .type = .Identifier, .literal = "add" },
+        .{ .type = .LeftParen, .literal = "(" },
+        .{ .type = .Identifier, .literal = "five" },
+        .{ .type = .Comma, .literal = "," },
+        .{ .type = .Identifier, .literal = "ten" },
+        .{ .type = .RightParen, .literal = ")" },
+        .{ .type = .SemiColon, .literal = ";" },
+        .{ .type = .Bang, .literal = "!" },
+        .{ .type = .Minus, .literal = "-" },
+        .{ .type = .Slash, .literal = "/" },
+        .{ .type = .Asterisk, .literal = "*" },
+        .{ .type = .Integer, .literal = "5" },
+        .{ .type = .SemiColon, .literal = ";" },
+        .{ .type = .Integer, .literal = "5" },
+        .{ .type = .LessThan, .literal = "<" },
+        .{ .type = .Integer, .literal = "10" },
+        .{ .type = .GreaterThan, .literal = ">" },
+        .{ .type = .Integer, .literal = "5" },
+        .{ .type = .SemiColon, .literal = ";" },
+        .{ .type = .Eof, .literal = "" },
     };
 
     var lexer = Lexer.init(input);

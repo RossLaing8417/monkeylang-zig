@@ -22,14 +22,25 @@ pub fn init(input: []const u8) Lexer {
 pub fn nextToken(self: *Lexer) Token {
     self.skipWhiteSpace();
 
-    // TODO: This doesn't feel right...
     var token: Token = switch (self.ch) {
-        '=' => .{ .type = .Assign, .literal = "=" },
+        '=' => blk: {
+            if (self.peekChar() == '=') {
+                self.readChar();
+                break :blk .{ .type = .Equal, .literal = "==" };
+            }
+            break :blk .{ .type = .Assign, .literal = "=" };
+        },
         '+' => .{ .type = .Plus, .literal = "+" },
         '-' => .{ .type = .Minus, .literal = "-" },
         '*' => .{ .type = .Asterisk, .literal = "*" },
         '/' => .{ .type = .Slash, .literal = "/" },
-        '!' => .{ .type = .Bang, .literal = "!" },
+        '!' => blk: {
+            if (self.peekChar() == '=') {
+                self.readChar();
+                break :blk .{ .type = .NotEqual, .literal = "!=" };
+            }
+            break :blk .{ .type = .Bang, .literal = "!" };
+        },
         '<' => .{ .type = .LessThan, .literal = "<" },
         '>' => .{ .type = .GreaterThan, .literal = ">" },
 
@@ -96,6 +107,13 @@ fn skipWhiteSpace(self: *Lexer) void {
     }
 }
 
+fn peekChar(self: *Lexer) u8 {
+    if (self.read_position >= self.input.len) {
+        return 0;
+    }
+    return self.input[self.read_position];
+}
+
 test "Lexer" {
     const input =
         \\let five = 5;
@@ -111,6 +129,8 @@ test "Lexer" {
         \\} else {
         \\  return false;
         \\}
+        \\10 == 10;
+        \\10 != 9;
     ;
 
     const expected = [_]Token{
@@ -179,6 +199,14 @@ test "Lexer" {
         .{ .type = .False, .literal = "false" },
         .{ .type = .SemiColon, .literal = ";" },
         .{ .type = .RightBrace, .literal = "}" },
+        .{ .type = .Integer, .literal = "10" },
+        .{ .type = .Equal, .literal = "==" },
+        .{ .type = .Integer, .literal = "10" },
+        .{ .type = .SemiColon, .literal = ";" },
+        .{ .type = .Integer, .literal = "10" },
+        .{ .type = .NotEqual, .literal = "!=" },
+        .{ .type = .Integer, .literal = "9" },
+        .{ .type = .SemiColon, .literal = ";" },
         .{ .type = .Eof, .literal = "" },
     };
 

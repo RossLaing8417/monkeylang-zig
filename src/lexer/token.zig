@@ -23,6 +23,8 @@ const Type = enum {
     Bang,
     LessThan,
     GreaterThan,
+    Equal,
+    NotEqual,
 
     // Symbols
     Comma,

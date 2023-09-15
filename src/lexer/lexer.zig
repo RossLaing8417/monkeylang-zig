@@ -106,6 +106,11 @@ test "Lexer" {
         \\let result = add(five, ten);
         \\!-/*5;
         \\5 < 10 > 5;
+        \\if (5 < 10) {
+        \\  return true;
+        \\} else {
+        \\  return false;
+        \\}
     ;
 
     const expected = [_]Token{
@@ -157,6 +162,23 @@ test "Lexer" {
         .{ .type = .GreaterThan, .literal = ">" },
         .{ .type = .Integer, .literal = "5" },
         .{ .type = .SemiColon, .literal = ";" },
+        .{ .type = .If, .literal = "if" },
+        .{ .type = .LeftParen, .literal = "(" },
+        .{ .type = .Integer, .literal = "5" },
+        .{ .type = .LessThan, .literal = "<" },
+        .{ .type = .Integer, .literal = "10" },
+        .{ .type = .RightParen, .literal = ")" },
+        .{ .type = .LeftBrace, .literal = "{" },
+        .{ .type = .Return, .literal = "return" },
+        .{ .type = .True, .literal = "true" },
+        .{ .type = .SemiColon, .literal = ";" },
+        .{ .type = .RightBrace, .literal = "}" },
+        .{ .type = .Else, .literal = "else" },
+        .{ .type = .LeftBrace, .literal = "{" },
+        .{ .type = .Return, .literal = "return" },
+        .{ .type = .False, .literal = "false" },
+        .{ .type = .SemiColon, .literal = ";" },
+        .{ .type = .RightBrace, .literal = "}" },
         .{ .type = .Eof, .literal = "" },
     };
 

@@ -18,9 +18,9 @@ const Type = enum {
     Assign,
     Plus,
     Minus,
-    Bang,
     Asterisk,
     Slash,
+    Bang,
     LessThan,
     GreaterThan,
 
@@ -35,11 +35,21 @@ const Type = enum {
     // Keywords
     Function,
     Let,
+    True,
+    False,
+    If,
+    Else,
+    Return,
 };
 
 const map = std.ComptimeStringMap(Type, .{
     .{ "fn", .Function },
     .{ "let", .Let },
+    .{ "true", .True },
+    .{ "false", .False },
+    .{ "if", .If },
+    .{ "else", .Else },
+    .{ "return", .Return },
 });
 
 pub fn lookupIdentifier(literal: []const u8) ?Type {

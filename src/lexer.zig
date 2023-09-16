@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const Token = @import("token.zig");
+pub const Token = @import("token.zig");
 
 const Lexer = @This();
 

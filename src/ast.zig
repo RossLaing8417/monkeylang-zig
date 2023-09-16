@@ -39,20 +39,23 @@ pub const Expression = struct {
 
 pub const Program = struct {
     statements: std.ArrayList(Statement),
+    allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !*Program {
         var program = try allocator.create(Program);
+        errdefer program.deinit();
 
         program.* = Program{
             .statements = try std.ArrayList(Statement).initCapacity(allocator, INIT_PROG_CAPACITY),
+            .allocator = allocator,
         };
 
         return program;
     }
 
-    pub fn deinit(self: *Program, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Program) void {
         self.statements.deinit();
-        allocator.destroy(self);
+        self.allocator.destroy(self);
     }
 
     pub fn tokenLiteral(self: *const Program) []const u8 {

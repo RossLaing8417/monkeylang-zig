@@ -12,10 +12,17 @@ const Expression = Ast.Expression;
 lexer: *Lexer,
 current_token: Token = undefined,
 peek_token: Token = undefined,
+allocator: std.mem.Allocator,
+errors: std.ArrayList([]const u8),
 
-pub fn init(lexer: *Lexer) Parser {
-    var parser = Parser{
+pub fn init(lexer: *Lexer, allocator: std.mem.Allocator) !*Parser {
+    var parser = try allocator.create(Parser);
+    errdefer parser.deinit();
+
+    parser.* = Parser{
         .lexer = lexer,
+        .allocator = allocator,
+        .errors = std.ArrayList([]const u8).init(allocator),
     };
 
     parser.nextToken();
@@ -24,12 +31,17 @@ pub fn init(lexer: *Lexer) Parser {
     return parser;
 }
 
+pub fn deinit(self: *Parser) void {
+    self.errors.deinit();
+    self.allocator.destroy(self);
+}
+
 pub fn parseProgram(self: *Parser, allocator: std.mem.Allocator) !*Program {
     var program = try Program.init(allocator);
-    errdefer program.deinit(allocator);
+    errdefer program.deinit();
 
     while (self.current_token.type != .Eof) {
-        if (self.parseStatement()) |statement| {
+        if (try self.parseStatement()) |statement| {
             try program.statements.append(statement);
         }
         self.nextToken();
@@ -38,23 +50,23 @@ pub fn parseProgram(self: *Parser, allocator: std.mem.Allocator) !*Program {
     return program;
 }
 
-fn parseStatement(self: *Parser) ?Statement {
+fn parseStatement(self: *Parser) !?Statement {
     switch (self.current_token.type) {
-        .Let => return self.parseLetStatement(),
+        .Let => return try self.parseLetStatement(),
         else => return null,
     }
 }
 
-fn parseLetStatement(self: *Parser) ?Statement {
+fn parseLetStatement(self: *Parser) !?Statement {
     var statement = Ast.LetStatement{ .token = self.current_token };
 
-    if (!self.expectPeek(.Identifier)) return null;
+    if (!try self.expectPeek(.Identifier)) return null;
     statement.name = Ast.Identifier{
         .token = self.current_token,
         .value = self.current_token.literal,
     };
 
-    if (!self.expectPeek(.Assign)) return null;
+    if (!try self.expectPeek(.Assign)) return null;
 
     while (!self.currentTokenIs(.SemiColon)) {
         self.nextToken();
@@ -76,12 +88,20 @@ fn peekTokenIs(self: *Parser, token_type: Token.Type) bool {
     return self.peek_token.type == token_type;
 }
 
-fn expectPeek(self: *Parser, token_type: Token.Type) bool {
+fn expectPeek(self: *Parser, token_type: Token.Type) !bool {
     if (self.peekTokenIs(token_type)) {
         self.nextToken();
         return true;
     }
+    try self.peekError(token_type);
     return false;
+}
+
+fn peekError(self: *Parser, token_type: Token.Type) !void {
+    try self.errors.append(try std.fmt.allocPrint(self.allocator, "Expected token {s} but instead got token {s}", .{
+        @tagName(token_type),
+        @tagName(self.peek_token.type),
+    }));
 }
 
 test "Let Statements" {
@@ -89,12 +109,26 @@ test "Let Statements" {
         \\let x = 5;
         \\let y = 10;
         \\let foobar = 838383;
+        // \\let x  5;
+        // \\let = 10;
+        // \\let 838383;
     ;
 
     var lexer = Lexer.init(input);
-    var parser = Parser.init(&lexer);
+
+    var parser = try Parser.init(&lexer, std.testing.allocator);
+    defer parser.deinit();
+
     var program = try parser.parseProgram(std.testing.allocator);
-    defer program.deinit(std.testing.allocator);
+    defer program.deinit();
+
+    if (parser.errors.items.len > 0) {
+        std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
+        for (parser.errors.items) |message| {
+            std.debug.print("- {s}\n", .{message});
+        }
+        try std.testing.expect(false);
+    }
 
     try std.testing.expectEqual(program.statements.items.len, 3);
 

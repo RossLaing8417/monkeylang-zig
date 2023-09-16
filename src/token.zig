@@ -6,6 +6,7 @@ type: Type,
 literal: []const u8,
 
 // TODO: Tagged union?
+// I tried it but probs need to move this into lexer.zig for it to work
 const Type = enum {
     Illegal,
     Eof,

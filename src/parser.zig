@@ -53,6 +53,7 @@ pub fn parseProgram(self: *Parser, allocator: std.mem.Allocator) !*Program {
 fn parseStatement(self: *Parser) !?Statement {
     switch (self.current_token.type) {
         .Let => return try self.parseLetStatement(),
+        .Return => return try self.parseReturnStatement(),
         else => return null,
     }
 }
@@ -73,6 +74,18 @@ fn parseLetStatement(self: *Parser) !?Statement {
     }
 
     return Statement{ .LetStatement = statement };
+}
+
+fn parseReturnStatement(self: *Parser) !?Statement {
+    var statement = Ast.ReturnStatement{ .token = self.current_token };
+
+    self.nextToken();
+
+    while (!self.currentTokenIs(.SemiColon)) {
+        self.nextToken();
+    }
+
+    return Statement{ .ReturnStatement = statement };
 }
 
 fn nextToken(self: *Parser) void {
@@ -109,9 +122,6 @@ test "Let Statements" {
         \\let x = 5;
         \\let y = 10;
         \\let foobar = 838383;
-        // \\let x  5;
-        // \\let = 10;
-        // \\let 838383;
     ;
 
     var lexer = Lexer.init(input);
@@ -121,6 +131,10 @@ test "Let Statements" {
 
     var program = try parser.parseProgram(std.testing.allocator);
     defer program.deinit();
+
+    // Apprently stdout not available???
+    const stderr = std.io.getStdErr();
+    _ = try program.write(stderr.writer());
 
     if (parser.errors.items.len > 0) {
         std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
@@ -149,5 +163,51 @@ test "Let Statements" {
             },
             else => unreachable,
         }
+    }
+}
+
+test "Return Statements" {
+    const input =
+        \\return 5;
+        \\return 10;
+        \\return 993322;
+    ;
+
+    var lexer = Lexer.init(input);
+
+    var parser = try Parser.init(&lexer, std.testing.allocator);
+    defer parser.deinit();
+
+    var program = try parser.parseProgram(std.testing.allocator);
+    defer program.deinit();
+
+    if (parser.errors.items.len > 0) {
+        std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
+        for (parser.errors.items) |message| {
+            std.debug.print("- {s}\n", .{message});
+        }
+        try std.testing.expect(false);
+    }
+
+    try std.testing.expectEqual(program.statements.items.len, 3);
+
+    const Expected = struct { identifier: []const u8 };
+    const expected = [_]Expected{
+        .{ .identifier = "return" },
+        .{ .identifier = "return" },
+        .{ .identifier = "return" },
+    };
+
+    for (expected, program.statements.items) |value, statement| {
+        _ = value;
+        try std.testing.expectEqualStrings("return", statement.tokenLiteral());
+
+        // switch (statement) {
+        //     .ReturnStatement => |return_statement| {
+        //         try std.testing.expectEqualStrings(value.identifier, return_statement.name.value);
+        //         try std.testing.expectEqualStrings(value.identifier, return_statement.name.tokenLiteral());
+        //     },
+        //     else => unreachable,
+        // }
     }
 }

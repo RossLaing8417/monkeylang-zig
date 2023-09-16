@@ -2,6 +2,7 @@ const std = @import("std");
 
 const Lexer = @import("lexer.zig");
 const Token = Lexer.Token;
+const WriteError = std.fs.File.WriteError;
 
 const INIT_PROG_CAPACITY = 32;
 
@@ -14,25 +15,46 @@ pub const Node = union(enum) {
             inline else => |node| return node.tokenLiteral(),
         }
     }
-};
 
-pub const Statement = union(enum) {
-    Program: Program,
-    LetStatement: LetStatement,
-
-    pub fn tokenLiteral(self: Statement) []const u8 {
+    pub fn write(self: Node, writer: std.fs.File.Writer) WriteError!usize {
         switch (self) {
-            inline else => |node| return node.tokenLiteral(),
+            inline else => |node| return try node.write(writer),
         }
     }
 };
 
-pub const Expression = struct {
+pub const Statement = union(enum) {
+    Program: Program,
+
+    LetStatement: LetStatement,
+    ReturnStatement: ReturnStatement,
+    ExpressionStatement: ExpressionStatement,
+
+    pub fn tokenLiteral(self: Statement) []const u8 {
+        switch (self) {
+            inline else => |statement| return statement.tokenLiteral(),
+        }
+    }
+
+    pub fn write(self: Statement, writer: std.fs.File.Writer) WriteError!usize {
+        switch (self) {
+            inline else => |statement| return try statement.write(writer),
+        }
+    }
+};
+
+pub const Expression = union(enum) {
     Identifier: Identifier,
 
-    pub fn tokenLiteral(self: *const Expression) []const u8 {
+    pub fn tokenLiteral(self: Expression, writer: std.fs.File.Writer) WriteError!usize {
         switch (self) {
-            inline else => |node| return node.tokenLiteral(),
+            inline else => |expression| return expression.tokenLiteral(writer),
+        }
+    }
+
+    pub fn write(self: Expression, writer: std.fs.File.Writer) WriteError!usize {
+        switch (self) {
+            inline else => |expression| return try expression.write(writer),
         }
     }
 };
@@ -64,6 +86,15 @@ pub const Program = struct {
         }
         return "";
     }
+
+    pub fn write(self: *const Program, writer: std.fs.File.Writer) WriteError!usize {
+        var bytes: usize = 0;
+        for (self.statements.items) |statement| {
+            bytes += try statement.write(writer);
+            bytes += try writer.write("\n");
+        }
+        return bytes;
+    }
 };
 
 pub const LetStatement = struct {
@@ -74,6 +105,48 @@ pub const LetStatement = struct {
     pub fn tokenLiteral(self: *const LetStatement) []const u8 {
         return self.token.literal;
     }
+
+    pub fn write(self: *const LetStatement, writer: std.fs.File.Writer) WriteError!usize {
+        var bytes: usize = 0;
+        bytes += try writer.write(self.tokenLiteral());
+        bytes += try writer.write(" ");
+        bytes += try self.name.write(writer);
+        bytes += try writer.write(" = ");
+        bytes += try writer.write("<...>");
+        bytes += try writer.write(";");
+        return bytes;
+    }
+};
+
+pub const ReturnStatement = struct {
+    token: Token,
+    return_value: Expression = undefined,
+
+    pub fn tokenLiteral(self: *const ReturnStatement) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: *const ReturnStatement, writer: std.fs.File.Writer) WriteError!usize {
+        var bytes: usize = 0;
+        bytes += try writer.write(self.tokenLiteral());
+        bytes += try writer.write(" ");
+        bytes += try writer.write("<...>");
+        bytes += try writer.write(";");
+        return bytes;
+    }
+};
+
+pub const ExpressionStatement = struct {
+    token: Token,
+    expression: Expression = undefined,
+
+    pub fn tokenLiteral(self: *const ExpressionStatement) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: *const ExpressionStatement, writer: std.fs.File.Writer) WriteError!usize {
+        return try self.expression.write(writer);
+    }
 };
 
 pub const Identifier = struct {
@@ -82,5 +155,9 @@ pub const Identifier = struct {
 
     pub fn tokenLiteral(self: *const Identifier) []const u8 {
         return self.token.literal;
+    }
+
+    pub fn write(self: *const Identifier, writer: std.fs.File.Writer) WriteError!usize {
+        return try writer.write(self.value);
     }
 };

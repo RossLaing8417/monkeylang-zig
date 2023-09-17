@@ -16,9 +16,9 @@ pub const Node = union(enum) {
         }
     }
 
-    pub fn write(self: Node, writer: std.fs.File.Writer) WriteError!usize {
+    pub fn write(self: Node, writer: anytype) void {
         switch (self) {
-            inline else => |node| return try node.write(writer),
+            inline else => |node| node.write(writer),
         }
     }
 };
@@ -36,9 +36,9 @@ pub const Statement = union(enum) {
         }
     }
 
-    pub fn write(self: Statement, writer: std.fs.File.Writer) WriteError!usize {
+    pub fn write(self: Statement, writer: anytype) void {
         switch (self) {
-            inline else => |statement| return try statement.write(writer),
+            inline else => |statement| statement.write(writer),
         }
     }
 };
@@ -46,15 +46,15 @@ pub const Statement = union(enum) {
 pub const Expression = union(enum) {
     Identifier: Identifier,
 
-    pub fn tokenLiteral(self: Expression, writer: std.fs.File.Writer) WriteError!usize {
+    pub fn tokenLiteral(self: Expression, writer: anytype) void {
         switch (self) {
             inline else => |expression| return expression.tokenLiteral(writer),
         }
     }
 
-    pub fn write(self: Expression, writer: std.fs.File.Writer) WriteError!usize {
+    pub fn write(self: Expression, writer: anytype) void {
         switch (self) {
-            inline else => |expression| return try expression.write(writer),
+            inline else => |expression| expression.write(writer),
         }
     }
 };
@@ -87,13 +87,11 @@ pub const Program = struct {
         return "";
     }
 
-    pub fn write(self: *const Program, writer: std.fs.File.Writer) WriteError!usize {
-        var bytes: usize = 0;
+    pub fn write(self: *const Program, writer: anytype) void {
         for (self.statements.items) |statement| {
-            bytes += try statement.write(writer);
-            bytes += try writer.write("\n");
+            statement.write(writer);
+            writer.writeAll("\n") catch unreachable;
         }
-        return bytes;
     }
 };
 
@@ -106,15 +104,13 @@ pub const LetStatement = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const LetStatement, writer: std.fs.File.Writer) WriteError!usize {
-        var bytes: usize = 0;
-        bytes += try writer.write(self.tokenLiteral());
-        bytes += try writer.write(" ");
-        bytes += try self.name.write(writer);
-        bytes += try writer.write(" = ");
-        bytes += try writer.write("<...>");
-        bytes += try writer.write(";");
-        return bytes;
+    pub fn write(self: *const LetStatement, writer: anytype) void {
+        writer.writeAll(self.tokenLiteral()) catch unreachable;
+        writer.writeAll(" ") catch unreachable;
+        self.name.write(writer);
+        writer.writeAll(" = ") catch unreachable;
+        self.value.write(writer);
+        writer.writeAll(";") catch unreachable;
     }
 };
 
@@ -126,13 +122,12 @@ pub const ReturnStatement = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const ReturnStatement, writer: std.fs.File.Writer) WriteError!usize {
-        var bytes: usize = 0;
-        bytes += try writer.write(self.tokenLiteral());
-        bytes += try writer.write(" ");
-        bytes += try writer.write("<...>");
-        bytes += try writer.write(";");
-        return bytes;
+    pub fn write(self: *const ReturnStatement, writer: anytype) void {
+        writer.writeAll(self.tokenLiteral()) catch unreachable;
+        writer.writeAll(" ") catch unreachable;
+        writer.writeAll("<...>") catch unreachable;
+        self.return_value.write(writer);
+        writer.writeAll(";") catch unreachable;
     }
 };
 
@@ -144,8 +139,8 @@ pub const ExpressionStatement = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const ExpressionStatement, writer: std.fs.File.Writer) WriteError!usize {
-        return try self.expression.write(writer);
+    pub fn write(self: *const ExpressionStatement, writer: anytype) void {
+        self.expression.write(writer);
     }
 };
 
@@ -157,7 +152,7 @@ pub const Identifier = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const Identifier, writer: std.fs.File.Writer) WriteError!usize {
-        return try writer.write(self.value);
+    pub fn write(self: *const Identifier, writer: anytype) void {
+        writer.writeAll(self.value) catch unreachable;
     }
 };

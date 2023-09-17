@@ -132,10 +132,6 @@ test "Let Statements" {
     var program = try parser.parseProgram(std.testing.allocator);
     defer program.deinit();
 
-    // Apprently stdout not available???
-    const stderr = std.io.getStdErr();
-    _ = try program.write(stderr.writer());
-
     if (parser.errors.items.len > 0) {
         std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
         for (parser.errors.items) |message| {
@@ -210,4 +206,35 @@ test "Return Statements" {
         //     else => unreachable,
         // }
     }
+}
+
+test "Writing" {
+    var statement = Ast.Statement{
+        .LetStatement = Ast.LetStatement{
+            .token = Token{ .type = .Let, .literal = "let" },
+            .name = Ast.Identifier{
+                .token = Token{ .type = .Identifier, .literal = "myVar" },
+                .value = "myVar",
+            },
+            .value = Expression{
+                .Identifier = Ast.Identifier{
+                    .token = Token{ .type = .Identifier, .literal = "anotherVar" },
+                    .value = "anotherVar",
+                },
+            },
+        },
+    };
+
+    var program = try Program.init(std.testing.allocator);
+    defer program.deinit();
+
+    try program.statements.append(statement);
+
+    const input = "let myVar = anotherVar;\n";
+    var buffer: [input.len]u8 = undefined;
+    var buf_writer = std.io.fixedBufferStream(&buffer);
+
+    program.write(buf_writer.writer());
+
+    try std.testing.expectEqualStrings(input, &buffer);
 }

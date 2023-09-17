@@ -45,6 +45,7 @@ pub const Statement = union(enum) {
 
 pub const Expression = union(enum) {
     Identifier: Identifier,
+    Integer: Integer,
 
     pub fn tokenLiteral(self: Expression, writer: anytype) void {
         switch (self) {
@@ -141,18 +142,32 @@ pub const ExpressionStatement = struct {
 
     pub fn write(self: *const ExpressionStatement, writer: anytype) void {
         self.expression.write(writer);
+        writer.writeAll(";") catch unreachable;
     }
 };
 
 pub const Identifier = struct {
     token: Token,
-    value: []const u8 = undefined,
+    value: []const u8,
 
     pub fn tokenLiteral(self: *const Identifier) []const u8 {
         return self.token.literal;
     }
 
     pub fn write(self: *const Identifier, writer: anytype) void {
+        writer.writeAll(self.value) catch unreachable;
+    }
+};
+
+pub const Integer = struct {
+    token: Token,
+    value: []const u8, // i64?
+
+    pub fn tokenLiteral(self: *const Integer) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: *const Integer, writer: anytype) void {
         writer.writeAll(self.value) catch unreachable;
     }
 };

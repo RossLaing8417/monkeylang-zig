@@ -64,22 +64,23 @@ fn parseStatement(self: *Parser) !?Statement {
     switch (self.current_token.type) {
         .Let => return try self.parseLetStatement(),
         .Return => return self.parseReturnStatement(),
-        else => return self.parseExpressionStatement(),
+        else => return try self.parseExpressionStatement(),
     }
 }
 
-fn parseExpression(self: *Parser, precedence: Precedence) Expression {
+fn parseExpression(self: *Parser, precedence: Precedence) !Expression {
     _ = precedence;
     switch (self.current_token.type) {
         .Identifier => return self.parseIdentifier(),
+        .Integer => return try self.parseInteger(),
         else => unreachable,
     }
 }
 
-fn parseExpressionStatement(self: *Parser) Statement {
+fn parseExpressionStatement(self: *Parser) !Statement {
     var statement = Ast.ExpressionStatement{
         .token = self.current_token,
-        .expression = self.parseExpression(.Lowest),
+        .expression = try self.parseExpression(.Lowest),
     };
 
     if (self.peekTokenIs(.SemiColon)) {
@@ -126,6 +127,17 @@ fn parseIdentifier(self: *Parser) Expression {
     };
 
     return Expression{ .Identifier = identifier };
+}
+
+fn parseInteger(self: *Parser) !Expression {
+    _ = try std.fmt.parseInt(i64, self.current_token.literal, 10);
+
+    var integer = Ast.Integer{
+        .token = self.current_token,
+        .value = self.current_token.literal,
+    };
+
+    return Expression{ .Integer = integer };
 }
 
 fn nextToken(self: *Parser) void {
@@ -182,20 +194,20 @@ test "Let Statement" {
 
     try std.testing.expectEqual(program.statements.items.len, 3);
 
-    const Expected = struct { identifier: []const u8 };
-    const expected = [_]Expected{
-        .{ .identifier = "x" },
-        .{ .identifier = "y" },
-        .{ .identifier = "foobar" },
+    const Expected = struct { value: []const u8 };
+    const expected_values = [_]Expected{
+        .{ .value = "x" },
+        .{ .value = "y" },
+        .{ .value = "foobar" },
     };
 
-    for (expected, program.statements.items) |value, statement| {
+    for (expected_values, program.statements.items) |expected, statement| {
         try std.testing.expectEqualStrings("let", statement.tokenLiteral());
 
         switch (statement) {
             .LetStatement => |let_statement| {
-                try std.testing.expectEqualStrings(value.identifier, let_statement.name.value);
-                try std.testing.expectEqualStrings(value.identifier, let_statement.name.tokenLiteral());
+                try std.testing.expectEqualStrings(expected.value, let_statement.name.value);
+                try std.testing.expectEqualStrings(expected.value, let_statement.name.tokenLiteral());
             },
             else => unreachable,
         }
@@ -227,29 +239,31 @@ test "Return Statement" {
 
     try std.testing.expectEqual(program.statements.items.len, 3);
 
-    const Expected = struct { identifier: []const u8 };
-    const expected = [_]Expected{
-        .{ .identifier = "return" },
-        .{ .identifier = "return" },
-        .{ .identifier = "return" },
+    const Expected = struct { value: []const u8 };
+    const expected_values = [_]Expected{
+        .{ .value = "return" },
+        .{ .value = "return" },
+        .{ .value = "return" },
     };
 
-    for (expected, program.statements.items) |value, statement| {
-        _ = value;
-        try std.testing.expectEqualStrings("return", statement.tokenLiteral());
+    for (expected_values, program.statements.items) |expected, statement| {
+        try std.testing.expectEqualStrings(expected.value, statement.tokenLiteral());
 
         // switch (statement) {
         //     .ReturnStatement => |return_statement| {
-        //         try std.testing.expectEqualStrings(value.identifier, return_statement.name.value);
-        //         try std.testing.expectEqualStrings(value.identifier, return_statement.name.tokenLiteral());
+        //         try std.testing.expectEqualStrings(expected.value, return_statement.name.value);
+        //         try std.testing.expectEqualStrings(expected.value, return_statement.name.tokenLiteral());
         //     },
         //     else => unreachable,
         // }
     }
 }
 
-test "Identifier Expression" {
-    const input = "foobar;";
+test "Identifier/Literal Expression" {
+    const input =
+        \\foobar;
+        \\5;
+    ;
 
     var lexer = Lexer.init(input);
 
@@ -267,22 +281,27 @@ test "Identifier Expression" {
         try std.testing.expect(false);
     }
 
-    try std.testing.expectEqual(program.statements.items.len, 1);
+    try std.testing.expectEqual(program.statements.items.len, 2);
 
-    const Expected = struct { identifier: []const u8 };
-    const expected = [_]Expected{
-        .{ .identifier = "foobar" },
+    const Expected = struct { value: []const u8 };
+    const expected_values = [_]Expected{
+        .{ .value = "foobar" },
+        .{ .value = "5" },
     };
 
-    for (expected, program.statements.items) |value, statement| {
-        try std.testing.expectEqualStrings("foobar", statement.tokenLiteral());
+    for (expected_values, program.statements.items) |expected, statement| {
+        try std.testing.expectEqualStrings(expected.value, statement.tokenLiteral());
 
         switch (statement) {
             .ExpressionStatement => |expr_statement| {
                 switch (expr_statement.expression) {
                     .Identifier => |identifier| {
-                        try std.testing.expectEqualStrings(value.identifier, identifier.value);
-                        try std.testing.expectEqualStrings(value.identifier, identifier.tokenLiteral());
+                        try std.testing.expectEqualStrings(expected.value, identifier.value);
+                        try std.testing.expectEqualStrings(expected.value, identifier.tokenLiteral());
+                    },
+                    .Integer => |integer| {
+                        try std.testing.expectEqualStrings(expected.value, integer.value);
+                        try std.testing.expectEqualStrings(expected.value, integer.tokenLiteral());
                     },
                     // else => unreachable,
                 }

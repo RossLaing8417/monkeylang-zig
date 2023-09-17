@@ -15,6 +15,16 @@ peek_token: Token = undefined,
 allocator: std.mem.Allocator,
 errors: std.ArrayList([]const u8),
 
+const Precedence = enum {
+    Lowest,
+    Equals,
+    LessOrGreater,
+    Sum,
+    Product,
+    Prefix,
+    Call,
+};
+
 pub fn init(lexer: *Lexer, allocator: std.mem.Allocator) !*Parser {
     var parser = try allocator.create(Parser);
     errdefer parser.deinit();
@@ -53,9 +63,30 @@ pub fn parseProgram(self: *Parser, allocator: std.mem.Allocator) !*Program {
 fn parseStatement(self: *Parser) !?Statement {
     switch (self.current_token.type) {
         .Let => return try self.parseLetStatement(),
-        .Return => return try self.parseReturnStatement(),
-        else => return null,
+        .Return => return self.parseReturnStatement(),
+        else => return self.parseExpressionStatement(),
     }
+}
+
+fn parseExpression(self: *Parser, precedence: Precedence) Expression {
+    _ = precedence;
+    switch (self.current_token.type) {
+        .Identifier => return self.parseIdentifier(),
+        else => unreachable,
+    }
+}
+
+fn parseExpressionStatement(self: *Parser) Statement {
+    var statement = Ast.ExpressionStatement{
+        .token = self.current_token,
+        .expression = self.parseExpression(.Lowest),
+    };
+
+    if (self.peekTokenIs(.SemiColon)) {
+        self.nextToken();
+    }
+
+    return Statement{ .ExpressionStatement = statement };
 }
 
 fn parseLetStatement(self: *Parser) !?Statement {
@@ -76,7 +107,7 @@ fn parseLetStatement(self: *Parser) !?Statement {
     return Statement{ .LetStatement = statement };
 }
 
-fn parseReturnStatement(self: *Parser) !?Statement {
+fn parseReturnStatement(self: *Parser) Statement {
     var statement = Ast.ReturnStatement{ .token = self.current_token };
 
     self.nextToken();
@@ -86,6 +117,15 @@ fn parseReturnStatement(self: *Parser) !?Statement {
     }
 
     return Statement{ .ReturnStatement = statement };
+}
+
+fn parseIdentifier(self: *Parser) Expression {
+    var identifier = Ast.Identifier{
+        .token = self.current_token,
+        .value = self.current_token.literal,
+    };
+
+    return Expression{ .Identifier = identifier };
 }
 
 fn nextToken(self: *Parser) void {
@@ -117,7 +157,7 @@ fn peekError(self: *Parser, token_type: Token.Type) !void {
     }));
 }
 
-test "Let Statements" {
+test "Let Statement" {
     const input =
         \\let x = 5;
         \\let y = 10;
@@ -162,7 +202,7 @@ test "Let Statements" {
     }
 }
 
-test "Return Statements" {
+test "Return Statement" {
     const input =
         \\return 5;
         \\return 10;
@@ -205,6 +245,50 @@ test "Return Statements" {
         //     },
         //     else => unreachable,
         // }
+    }
+}
+
+test "Identifier Expression" {
+    const input = "foobar;";
+
+    var lexer = Lexer.init(input);
+
+    var parser = try Parser.init(&lexer, std.testing.allocator);
+    defer parser.deinit();
+
+    var program = try parser.parseProgram(std.testing.allocator);
+    defer program.deinit();
+
+    if (parser.errors.items.len > 0) {
+        std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
+        for (parser.errors.items) |message| {
+            std.debug.print("- {s}\n", .{message});
+        }
+        try std.testing.expect(false);
+    }
+
+    try std.testing.expectEqual(program.statements.items.len, 1);
+
+    const Expected = struct { identifier: []const u8 };
+    const expected = [_]Expected{
+        .{ .identifier = "foobar" },
+    };
+
+    for (expected, program.statements.items) |value, statement| {
+        try std.testing.expectEqualStrings("foobar", statement.tokenLiteral());
+
+        switch (statement) {
+            .ExpressionStatement => |expr_statement| {
+                switch (expr_statement.expression) {
+                    .Identifier => |identifier| {
+                        try std.testing.expectEqualStrings(value.identifier, identifier.value);
+                        try std.testing.expectEqualStrings(value.identifier, identifier.tokenLiteral());
+                    },
+                    // else => unreachable,
+                }
+            },
+            else => unreachable,
+        }
     }
 }
 

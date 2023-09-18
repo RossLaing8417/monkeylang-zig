@@ -7,8 +7,8 @@ const WriteError = std.fs.File.WriteError;
 const INIT_PROG_CAPACITY = 32;
 
 pub const Node = union(enum) {
-    Statement: Statement,
-    Expression: Expression,
+    Statement: *Statement,
+    Expression: *Expression,
 
     pub fn tokenLiteral(self: Node) []const u8 {
         switch (self) {
@@ -24,11 +24,11 @@ pub const Node = union(enum) {
 };
 
 pub const Statement = union(enum) {
-    Program: Program,
+    Program: *Program,
 
-    LetStatement: LetStatement,
-    ReturnStatement: ReturnStatement,
-    ExpressionStatement: ExpressionStatement,
+    LetStatement: *LetStatement,
+    ReturnStatement: *ReturnStatement,
+    ExpressionStatement: *ExpressionStatement,
 
     pub fn tokenLiteral(self: Statement) []const u8 {
         switch (self) {
@@ -44,8 +44,10 @@ pub const Statement = union(enum) {
 };
 
 pub const Expression = union(enum) {
-    Identifier: Identifier,
-    Integer: Integer,
+    Identifier: *Identifier,
+    Integer: *Integer,
+
+    PrefixExpression: *PrefixExpression,
 
     pub fn tokenLiteral(self: Expression, writer: anytype) void {
         switch (self) {
@@ -61,7 +63,7 @@ pub const Expression = union(enum) {
 };
 
 pub const Program = struct {
-    statements: std.ArrayList(Statement),
+    statements: std.ArrayList(*Statement),
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !*Program {
@@ -69,7 +71,7 @@ pub const Program = struct {
         errdefer program.deinit();
 
         program.* = Program{
-            .statements = try std.ArrayList(Statement).initCapacity(allocator, INIT_PROG_CAPACITY),
+            .statements = try std.ArrayList(*Statement).initCapacity(allocator, INIT_PROG_CAPACITY),
             .allocator = allocator,
         };
 
@@ -98,8 +100,8 @@ pub const Program = struct {
 
 pub const LetStatement = struct {
     token: Token,
-    name: Identifier = undefined,
-    value: Expression = undefined,
+    name: *Identifier = undefined,
+    value: *Expression = undefined,
 
     pub fn tokenLiteral(self: *const LetStatement) []const u8 {
         return self.token.literal;
@@ -117,7 +119,7 @@ pub const LetStatement = struct {
 
 pub const ReturnStatement = struct {
     token: Token,
-    return_value: Expression = undefined,
+    return_value: *Expression = undefined,
 
     pub fn tokenLiteral(self: *const ReturnStatement) []const u8 {
         return self.token.literal;
@@ -134,7 +136,7 @@ pub const ReturnStatement = struct {
 
 pub const ExpressionStatement = struct {
     token: Token,
-    expression: Expression = undefined,
+    expression: *Expression = undefined,
 
     pub fn tokenLiteral(self: *const ExpressionStatement) []const u8 {
         return self.token.literal;
@@ -169,5 +171,22 @@ pub const Integer = struct {
 
     pub fn write(self: *const Integer, writer: anytype) void {
         writer.writeAll(self.value) catch unreachable;
+    }
+};
+
+pub const PrefixExpression = struct {
+    token: Token,
+    operator: []const u8,
+    operand: *Expression = undefined,
+
+    pub fn tokenLiteral(self: *const PrefixExpression) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: *const PrefixExpression, writer: anytype) void {
+        writer.writeAll("(") catch unreachable;
+        writer.writeAll(self.operator) catch unreachable;
+        self.operand.write(writer);
+        writer.writeAll(")") catch unreachable;
     }
 };

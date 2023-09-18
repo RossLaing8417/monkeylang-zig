@@ -17,7 +17,7 @@ peek_token: Token = undefined,
 allocator: std.mem.Allocator,
 errors: std.ArrayList([]const u8),
 
-const Precedence = enum {
+const Precedence = enum(u8) {
     Lowest,
     Equals,
     LessOrGreater,
@@ -71,14 +71,39 @@ fn parseStatement(self: *Parser) ParseError!?*Statement {
 }
 
 fn parseExpression(self: *Parser, precedence: Precedence) ParseError!*Expression {
-    _ = precedence;
-    switch (self.current_token.type) {
-        .Identifier => return try self.parseIdentifier(),
-        .Integer => return try self.parseInteger(),
-        .Bang => return try self.parsePrefixExpression(),
-        .Minus => return try self.parsePrefixExpression(),
-        else => return undefined,
+    var left_operand = switch (self.current_token.type) {
+        .Identifier => try self.parseIdentifier(),
+        .Integer => try self.parseInteger(),
+        .Bang => try self.parsePrefixExpression(),
+        .Minus => try self.parsePrefixExpression(),
+        else => unreachable,
+    };
+
+    while (true) {
+        if (self.peekTokenIs(.SemiColon) or @intFromEnum(precedence) >= @intFromEnum(self.peekPrecedence())) {
+            break;
+        }
+
+        // I don't know what the right pattern is here if there is any...?
+        // #skillissue
+        _ = switch (self.peek_token.type) {
+            .Plus => true,
+            .Minus => true,
+            .Asterisk => true,
+            .Slash => true,
+            .Equal => true,
+            .NotEqual => true,
+            .LessThan => true,
+            .GreaterThan => true,
+            else => return left_operand,
+        };
+
+        self.nextToken();
+
+        left_operand = try self.parseInfixExpression(left_operand);
     }
+
+    return left_operand;
 }
 
 fn parseExpressionStatement(self: *Parser) ParseError!*Statement {
@@ -182,6 +207,26 @@ fn parsePrefixExpression(self: *Parser) ParseError!*Expression {
     return expression;
 }
 
+fn parseInfixExpression(self: *Parser, left_operand: *Expression) ParseError!*Expression {
+    var infix_expression = try self.allocator.create(Ast.InfixExpression);
+    infix_expression.* = Ast.InfixExpression{
+        .token = self.current_token,
+        .operator = self.current_token.literal,
+        .left_operand = left_operand,
+    };
+
+    const current_precedence = self.currentPrecedence();
+
+    self.nextToken();
+
+    infix_expression.right_operand = try self.parseExpression(current_precedence);
+
+    var expression = try self.allocator.create(Expression);
+    expression.* = Expression{ .InfixExpression = infix_expression };
+
+    return expression;
+}
+
 fn nextToken(self: *Parser) void {
     self.current_token = self.peek_token;
     self.peek_token = self.lexer.nextToken();
@@ -209,6 +254,28 @@ fn peekError(self: *Parser, token_type: Token.Type) ParseError!void {
         @tagName(token_type),
         @tagName(self.peek_token.type),
     }));
+}
+
+fn precedenceMap(token_type: Token.Type) Precedence {
+    return switch (token_type) {
+        .Equal => .Equals,
+        .NotEqual => .Equals,
+        .LessThan => .LessOrGreater,
+        .GreaterThan => .LessOrGreater,
+        .Plus => .Sum,
+        .Minus => .Sum,
+        .Asterisk => .Product,
+        .Slash => .Product,
+        else => .Lowest,
+    };
+}
+
+fn peekPrecedence(self: *Parser) Precedence {
+    return precedenceMap(self.peek_token.type);
+}
+
+fn currentPrecedence(self: *Parser) Precedence {
+    return precedenceMap(self.current_token.type);
 }
 
 test "Let Statement" {
@@ -453,6 +520,134 @@ test "Prefix Operators" {
             },
             else => unreachable,
         }
+    }
+}
+
+test "Infix Operators" {
+    const input =
+        \\5 + 5;
+        \\5 - 5;
+        \\5 * 5;
+        \\5 / 5;
+        \\5 > 5;
+        \\5 < 5;
+        \\5 == 5;
+        \\5 != 5;
+    ;
+
+    var lexer = Lexer.init(input);
+
+    // TODO: Memory management...
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    var allocator = arena.allocator();
+
+    var parser = try Parser.init(&lexer, allocator);
+    defer parser.deinit();
+
+    var program = try parser.parseProgram(allocator);
+    defer program.deinit();
+
+    // var buffer: [input.len * 2]u8 = undefined;
+    // var stream = std.io.fixedBufferStream(&buffer);
+    // program.write(stream.writer());
+    // std.debug.print("Prefix Operators:\n{s}\n", .{buffer});
+
+    if (parser.errors.items.len > 0) {
+        std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
+        for (parser.errors.items) |message| {
+            std.debug.print("- {s}\n", .{message});
+        }
+        try std.testing.expect(false);
+    }
+
+    try std.testing.expectEqual(program.statements.items.len, 8);
+
+    const Expected = struct { lhs: []const u8, operator: []const u8, rhs: []const u8 };
+    const expected_values = [_]Expected{
+        .{ .lhs = "5", .operator = "+", .rhs = "5" },
+        .{ .lhs = "5", .operator = "-", .rhs = "5" },
+        .{ .lhs = "5", .operator = "*", .rhs = "5" },
+        .{ .lhs = "5", .operator = "/", .rhs = "5" },
+        .{ .lhs = "5", .operator = ">", .rhs = "5" },
+        .{ .lhs = "5", .operator = "<", .rhs = "5" },
+        .{ .lhs = "5", .operator = "==", .rhs = "5" },
+        .{ .lhs = "5", .operator = "!=", .rhs = "5" },
+    };
+
+    for (expected_values, program.statements.items) |expected, statement| {
+        try std.testing.expectEqualStrings(expected.lhs, statement.tokenLiteral());
+
+        switch (statement.*) {
+            .ExpressionStatement => |expr_statement| {
+                switch (expr_statement.expression.*) {
+                    .InfixExpression => |infix_expression| {
+                        try std.testing.expectEqualStrings(expected.operator, infix_expression.operator);
+                        try std.testing.expectEqualStrings(expected.operator, infix_expression.tokenLiteral());
+                        switch (infix_expression.left_operand.*) {
+                            .Integer => |integer| {
+                                try std.testing.expectEqualStrings(expected.lhs, integer.value);
+                                try std.testing.expectEqualStrings(expected.lhs, integer.tokenLiteral());
+                            },
+                            else => unreachable,
+                        }
+                        switch (infix_expression.right_operand.*) {
+                            .Integer => |integer| {
+                                try std.testing.expectEqualStrings(expected.rhs, integer.value);
+                                try std.testing.expectEqualStrings(expected.rhs, integer.tokenLiteral());
+                            },
+                            else => unreachable,
+                        }
+                    },
+                    else => unreachable,
+                }
+            },
+            else => unreachable,
+        }
+    }
+}
+
+test "Operator Precedence" {
+    const Test = struct { input: []const u8, expected: []const u8 };
+    var tests = [_]Test{
+        .{ .input = "-a * b;\n", .expected = "((-a) * b);\n" },
+        .{ .input = "!-a;\n", .expected = "(!(-a));\n" },
+        .{ .input = "a + b + c;\n", .expected = "((a + b) + c);\n" },
+        .{ .input = "a + b - c;\n", .expected = "((a + b) - c);\n" },
+        .{ .input = "a * b * c;\n", .expected = "((a * b) * c);\n" },
+        .{ .input = "a * b / c;\n", .expected = "((a * b) / c);\n" },
+        .{ .input = "a + b / c;\n", .expected = "(a + (b / c));\n" },
+        .{ .input = "a + b * c + d / e - f;\n", .expected = "(((a + (b * c)) + (d / e)) - f);\n" },
+        .{ .input = "3 + 4;\n-5 * 5;\n", .expected = "(3 + 4);\n((-5) * 5);\n" },
+        .{ .input = "5 > 4 == 3 < 4;\n", .expected = "((5 > 4) == (3 < 4));\n" },
+        .{ .input = "5 < 4 != 3 > 4;\n", .expected = "((5 < 4) != (3 > 4));\n" },
+        .{ .input = "3 + 4 * 5 == 3 * 1 + 4 * 5;\n", .expected = "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)));\n" },
+    };
+
+    // TODO: Memory management...
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    var allocator = arena.allocator();
+
+    for (tests) |test_entry| {
+        var lexer = Lexer.init(test_entry.input);
+
+        var parser = try Parser.init(&lexer, allocator);
+        defer parser.deinit();
+
+        var program = try parser.parseProgram(allocator);
+        defer program.deinit();
+
+        var buffer = try allocator.alloc(u8, test_entry.expected.len);
+        defer allocator.free(buffer);
+
+        var buf_writer = std.io.fixedBufferStream(buffer);
+
+        program.write(buf_writer.writer());
+
+        try std.testing.expectEqualStrings(test_entry.expected, buffer);
     }
 }
 

@@ -48,6 +48,7 @@ pub const Expression = union(enum) {
     Integer: *Integer,
 
     PrefixExpression: *PrefixExpression,
+    InfixExpression: *InfixExpression,
 
     pub fn tokenLiteral(self: Expression, writer: anytype) void {
         switch (self) {
@@ -187,6 +188,27 @@ pub const PrefixExpression = struct {
         writer.writeAll("(") catch unreachable;
         writer.writeAll(self.operator) catch unreachable;
         self.operand.write(writer);
+        writer.writeAll(")") catch unreachable;
+    }
+};
+
+pub const InfixExpression = struct {
+    token: Token,
+    operator: []const u8,
+    left_operand: *Expression = undefined,
+    right_operand: *Expression = undefined,
+
+    pub fn tokenLiteral(self: *const InfixExpression) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: *const InfixExpression, writer: anytype) void {
+        writer.writeAll("(") catch unreachable;
+        self.left_operand.write(writer);
+        writer.writeAll(" ") catch unreachable;
+        writer.writeAll(self.operator) catch unreachable;
+        writer.writeAll(" ") catch unreachable;
+        self.right_operand.write(writer);
         writer.writeAll(")") catch unreachable;
     }
 };

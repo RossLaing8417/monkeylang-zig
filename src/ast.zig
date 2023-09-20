@@ -46,6 +46,7 @@ pub const Statement = union(enum) {
 pub const Expression = union(enum) {
     Identifier: *Identifier,
     Integer: *Integer,
+    Boolean: *Boolean,
 
     PrefixExpression: *PrefixExpression,
     InfixExpression: *InfixExpression,
@@ -171,6 +172,19 @@ pub const Integer = struct {
     }
 
     pub fn write(self: *const Integer, writer: anytype) void {
+        writer.writeAll(self.value) catch unreachable;
+    }
+};
+
+pub const Boolean = struct {
+    token: Token,
+    value: []const u8, // bool?
+
+    pub fn tokenLiteral(self: *const Boolean) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: *const Boolean, writer: anytype) void {
         writer.writeAll(self.value) catch unreachable;
     }
 };

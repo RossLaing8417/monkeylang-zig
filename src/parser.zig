@@ -76,6 +76,8 @@ fn parseExpression(self: *Parser, precedence: Precedence) ParseError!*Expression
         .Integer => try self.parseInteger(),
         .Bang => try self.parsePrefixExpression(),
         .Minus => try self.parsePrefixExpression(),
+        .True => try self.parseBoolean(),
+        .False => try self.parseBoolean(),
         else => unreachable,
     };
 
@@ -190,6 +192,19 @@ fn parseInteger(self: *Parser) ParseError!*Expression {
     return expression;
 }
 
+fn parseBoolean(self: *Parser) ParseError!*Expression {
+    var boolean = try self.allocator.create(Ast.Boolean);
+    boolean.* = Ast.Boolean{
+        .token = self.current_token,
+        .value = self.current_token.literal,
+    };
+
+    var expression = try self.allocator.create(Expression);
+    expression.* = Expression{ .Boolean = boolean };
+
+    return expression;
+}
+
 fn parsePrefixExpression(self: *Parser) ParseError!*Expression {
     var prefix_expression = try self.allocator.create(Ast.PrefixExpression);
     prefix_expression.* = Ast.PrefixExpression{
@@ -219,6 +234,7 @@ fn parseInfixExpression(self: *Parser, left_operand: *Expression) ParseError!*Ex
 
     self.nextToken();
 
+    // Decrement current_precedence param for right-associativity
     infix_expression.right_operand = try self.parseExpression(current_precedence);
 
     var expression = try self.allocator.create(Expression);
@@ -314,11 +330,11 @@ test "Let Statement" {
 
     try std.testing.expectEqual(program.statements.items.len, 3);
 
-    const Expected = struct { value: []const u8 };
+    const Expected = struct { identifier: []const u8, value: []const u8 };
     const expected_values = [_]Expected{
-        .{ .value = "x" },
-        .{ .value = "y" },
-        .{ .value = "foobar" },
+        .{ .identifier = "x", .value = "5" },
+        .{ .identifier = "y", .value = "10" },
+        .{ .identifier = "foobar", .value = "838383" },
     };
 
     for (expected_values, program.statements.items) |expected, statement| {
@@ -326,8 +342,20 @@ test "Let Statement" {
 
         switch (statement.*) {
             .LetStatement => |let_statement| {
-                try std.testing.expectEqualStrings(expected.value, let_statement.name.value);
-                try std.testing.expectEqualStrings(expected.value, let_statement.name.tokenLiteral());
+                try std.testing.expectEqualStrings(expected.identifier, let_statement.name.value);
+                try std.testing.expectEqualStrings(expected.identifier, let_statement.name.tokenLiteral());
+
+                // switch (let_statement.value.*) {
+                //     .Identifier => |identifier| {
+                //         try std.testing.expectEqualStrings(expected.value, identifier.value);
+                //         try std.testing.expectEqualStrings(expected.value, identifier.tokenLiteral());
+                //     },
+                //     .Integer => |integer| {
+                //         try std.testing.expectEqualStrings(expected.value, integer.value);
+                //         try std.testing.expectEqualStrings(expected.value, integer.tokenLiteral());
+                //     },
+                //     else => unreachable,
+                // }
             },
             else => unreachable,
         }
@@ -394,6 +422,8 @@ test "Identifier/Literal Expression" {
     const input =
         \\foobar;
         \\5;
+        \\true;
+        \\false;
     ;
 
     var lexer = Lexer.init(input);
@@ -423,12 +453,14 @@ test "Identifier/Literal Expression" {
         try std.testing.expect(false);
     }
 
-    try std.testing.expectEqual(program.statements.items.len, 2);
+    try std.testing.expectEqual(program.statements.items.len, 4);
 
     const Expected = struct { value: []const u8 };
     const expected_values = [_]Expected{
         .{ .value = "foobar" },
         .{ .value = "5" },
+        .{ .value = "true" },
+        .{ .value = "false" },
     };
 
     for (expected_values, program.statements.items) |expected, statement| {
@@ -444,6 +476,10 @@ test "Identifier/Literal Expression" {
                     .Integer => |integer| {
                         try std.testing.expectEqualStrings(expected.value, integer.value);
                         try std.testing.expectEqualStrings(expected.value, integer.tokenLiteral());
+                    },
+                    .Boolean => |boolean| {
+                        try std.testing.expectEqualStrings(expected.value, boolean.value);
+                        try std.testing.expectEqualStrings(expected.value, boolean.tokenLiteral());
                     },
                     else => unreachable,
                 }
@@ -533,6 +569,9 @@ test "Infix Operators" {
         \\5 < 5;
         \\5 == 5;
         \\5 != 5;
+        \\true == true;
+        \\true != false;
+        \\false == false;
     ;
 
     var lexer = Lexer.init(input);
@@ -562,7 +601,7 @@ test "Infix Operators" {
         try std.testing.expect(false);
     }
 
-    try std.testing.expectEqual(program.statements.items.len, 8);
+    try std.testing.expectEqual(program.statements.items.len, 11);
 
     const Expected = struct { lhs: []const u8, operator: []const u8, rhs: []const u8 };
     const expected_values = [_]Expected{
@@ -574,6 +613,9 @@ test "Infix Operators" {
         .{ .lhs = "5", .operator = "<", .rhs = "5" },
         .{ .lhs = "5", .operator = "==", .rhs = "5" },
         .{ .lhs = "5", .operator = "!=", .rhs = "5" },
+        .{ .lhs = "true", .operator = "==", .rhs = "true" },
+        .{ .lhs = "true", .operator = "!=", .rhs = "false" },
+        .{ .lhs = "false", .operator = "==", .rhs = "false" },
     };
 
     for (expected_values, program.statements.items) |expected, statement| {
@@ -590,12 +632,20 @@ test "Infix Operators" {
                                 try std.testing.expectEqualStrings(expected.lhs, integer.value);
                                 try std.testing.expectEqualStrings(expected.lhs, integer.tokenLiteral());
                             },
+                            .Boolean => |boolean| {
+                                try std.testing.expectEqualStrings(expected.lhs, boolean.value);
+                                try std.testing.expectEqualStrings(expected.lhs, boolean.tokenLiteral());
+                            },
                             else => unreachable,
                         }
                         switch (infix_expression.right_operand.*) {
                             .Integer => |integer| {
                                 try std.testing.expectEqualStrings(expected.rhs, integer.value);
                                 try std.testing.expectEqualStrings(expected.rhs, integer.tokenLiteral());
+                            },
+                            .Boolean => |boolean| {
+                                try std.testing.expectEqualStrings(expected.rhs, boolean.value);
+                                try std.testing.expectEqualStrings(expected.rhs, boolean.tokenLiteral());
                             },
                             else => unreachable,
                         }
@@ -623,6 +673,10 @@ test "Operator Precedence" {
         .{ .input = "5 > 4 == 3 < 4;\n", .expected = "((5 > 4) == (3 < 4));\n" },
         .{ .input = "5 < 4 != 3 > 4;\n", .expected = "((5 < 4) != (3 > 4));\n" },
         .{ .input = "3 + 4 * 5 == 3 * 1 + 4 * 5;\n", .expected = "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)));\n" },
+        .{ .input = "true;\n", .expected = "true;\n" },
+        .{ .input = "false;\n", .expected = "false;\n" },
+        .{ .input = "3 > 5 == false;\n", .expected = "((3 > 5) == false);\n" },
+        .{ .input = "3 < 5 == true;\n", .expected = "((3 < 5) == true);\n" },
     };
 
     // TODO: Memory management...

@@ -78,6 +78,7 @@ fn parseExpression(self: *Parser, precedence: Precedence) ParseError!*Expression
         .Minus => try self.parsePrefixExpression(),
         .True => try self.parseBoolean(),
         .False => try self.parseBoolean(),
+        .LeftParen => try self.parseGroupedExpression(),
         else => unreachable,
     };
 
@@ -106,6 +107,18 @@ fn parseExpression(self: *Parser, precedence: Precedence) ParseError!*Expression
     }
 
     return left_operand;
+}
+
+fn parseGroupedExpression(self: *Parser) ParseError!*Expression {
+    self.nextToken();
+
+    var expression = self.parseExpression(.Lowest);
+
+    if (!try self.expectPeek(.RightParen)) {
+        unreachable;
+    }
+
+    return expression;
 }
 
 fn parseExpressionStatement(self: *Parser) ParseError!*Statement {
@@ -677,6 +690,10 @@ test "Operator Precedence" {
         .{ .input = "false;\n", .expected = "false;\n" },
         .{ .input = "3 > 5 == false;\n", .expected = "((3 > 5) == false);\n" },
         .{ .input = "3 < 5 == true;\n", .expected = "((3 < 5) == true);\n" },
+        .{ .input = "1 + (2 + 3) + 4;\n", .expected = "((1 + (2 + 3)) + 4);\n" },
+        .{ .input = "(5 + 5) * 2;\n", .expected = "((5 + 5) * 2);\n" },
+        .{ .input = "-(5 + 5);\n", .expected = "(-(5 + 5));\n" },
+        .{ .input = "!(true == true);\n", .expected = "(!(true == true));\n" },
     };
 
     // TODO: Memory management...

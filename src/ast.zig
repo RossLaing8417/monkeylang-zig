@@ -4,9 +4,6 @@ const Lexer = @import("lexer.zig");
 const Token = Lexer.Token;
 const WriteError = std.fs.File.WriteError;
 
-const INIT_PROG_CAPACITY = 32;
-const INIT_BLOCK_CAPACITY = 4;
-
 pub const Node = union(enum) {
     Statement: *Statement,
     Expression: *Expression,
@@ -53,6 +50,7 @@ pub const Expression = union(enum) {
     InfixExpression: *InfixExpression,
     IfExpression: *IfExpression,
     FunctionLiteral: *FunctionLiteral,
+    CallExpression: *CallExpression,
 
     pub fn tokenLiteral(self: Expression, writer: anytype) void {
         switch (self) {
@@ -76,7 +74,7 @@ pub const Program = struct {
         errdefer program.deinit();
 
         program.* = Program{
-            .statements = try std.ArrayList(*Statement).initCapacity(allocator, INIT_PROG_CAPACITY),
+            .statements = std.ArrayList(*Statement).init(allocator),
             .allocator = allocator,
         };
 
@@ -263,7 +261,7 @@ pub const BlockStatement = struct {
 
         block_statement.* = BlockStatement{
             .token = token,
-            .statements = try std.ArrayList(*Statement).initCapacity(allocator, INIT_BLOCK_CAPACITY),
+            .statements = std.ArrayList(*Statement).init(allocator),
             .allocator = allocator,
         };
 
@@ -301,7 +299,7 @@ pub const FunctionLiteral = struct {
 
         function_literal.* = FunctionLiteral{
             .token = token,
-            .parameters = try std.ArrayList(*Identifier).initCapacity(allocator, INIT_BLOCK_CAPACITY),
+            .parameters = std.ArrayList(*Identifier).init(allocator),
             .body = undefined,
             .allocator = allocator,
         };
@@ -327,5 +325,45 @@ pub const FunctionLiteral = struct {
         }
         writer.writeAll(") ") catch unreachable;
         self.body.write(writer);
+    }
+};
+
+pub const CallExpression = struct {
+    token: Token,
+    function: *Expression,
+    arguments: std.ArrayList(*Expression),
+    allocator: std.mem.Allocator,
+
+    pub fn init(token: Token, allocator: std.mem.Allocator) !*CallExpression {
+        var call_expression = try allocator.create(CallExpression);
+        errdefer call_expression.deinit();
+
+        call_expression.* = CallExpression{
+            .token = token,
+            .function = undefined,
+            .arguments = std.ArrayList(*Expression).init(allocator),
+            .allocator = allocator,
+        };
+
+        return call_expression;
+    }
+
+    pub fn deinit(self: *CallExpression) void {
+        self.arguments.deinit();
+        self.allocator.destroy(self);
+    }
+
+    pub fn tokenLiteral(self: *const CallExpression) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: *const CallExpression, writer: anytype) void {
+        self.function.write(writer);
+        writer.writeAll("(") catch unreachable;
+        for (self.arguments.items, 0..) |argument, i| {
+            if (i > 0) writer.writeAll(", ") catch unreachable;
+            argument.write(writer);
+        }
+        writer.writeAll(")") catch unreachable;
     }
 };

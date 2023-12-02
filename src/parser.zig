@@ -100,12 +100,16 @@ fn parseExpression(self: *Parser, precedence: Precedence) ParseError!*Expression
             .NotEqual => true,
             .LessThan => true,
             .GreaterThan => true,
+            .LeftParen => true,
             else => return left_operand,
         };
 
         self.nextToken();
 
-        left_operand = try self.parseInfixExpression(left_operand);
+        left_operand = switch (self.current_token.type) {
+            .LeftParen => try self.parseCallExpression(left_operand),
+            else => try self.parseInfixExpression(left_operand),
+        };
     }
 
     return left_operand;
@@ -116,9 +120,7 @@ fn parseGroupedExpression(self: *Parser) ParseError!*Expression {
 
     var expression = self.parseExpression(.Lowest);
 
-    if (!try self.expectPeek(.RightParen)) {
-        unreachable;
-    }
+    _ = try self.expectPeek(.RightParen);
 
     return expression;
 }
@@ -184,6 +186,30 @@ fn parseFunctionLiteral(self: *Parser) ParseError!*Expression {
 
     var expression = try self.allocator.create(Expression);
     expression.* = Expression{ .FunctionLiteral = function_literal };
+
+    return expression;
+}
+
+fn parseCallExpression(self: *Parser, function: *Expression) ParseError!*Expression {
+    var call_expression = try Ast.CallExpression.init(self.current_token, self.allocator);
+    call_expression.function = function;
+
+    while (!self.peekTokenIs(.RightParen)) {
+        self.nextToken();
+
+        var expression = try self.parseExpression(.Lowest);
+
+        try call_expression.arguments.append(expression);
+
+        if (self.peekTokenIs(.Comma)) {
+            self.nextToken();
+        }
+    }
+
+    _ = try self.expectPeek(.RightParen);
+
+    var expression = try self.allocator.create(Expression);
+    expression.* = Expression{ .CallExpression = call_expression };
 
     return expression;
 }
@@ -377,6 +403,7 @@ fn precedenceMap(token_type: Token.Type) Precedence {
         .Minus => .Sum,
         .Asterisk => .Product,
         .Slash => .Product,
+        .LeftParen => .Call,
         else => .Lowest,
     };
 }
@@ -776,6 +803,9 @@ test "Operator Precedence" {
         .{ .input = "(5 + 5) * 2;\n", .expected = "((5 + 5) * 2);\n" },
         .{ .input = "-(5 + 5);\n", .expected = "(-(5 + 5));\n" },
         .{ .input = "!(true == true);\n", .expected = "(!(true == true));\n" },
+        .{ .input = "a + add(b * c) + d", .expected = "((a + add((b * c))) + d);\n" },
+        .{ .input = "add(a, b, 1, 2 * 3, 4 + 5, add(6, 7 * 8))", .expected = "add(a, b, 1, (2 * 3), (4 + 5), add(6, (7 * 8)));\n" },
+        .{ .input = "add(a + b + c * d / f + g)", .expected = "add((((a + b) + ((c * d) / f)) + g));\n" },
     };
 
     // TODO: Memory management...
@@ -969,8 +999,6 @@ test "Function Literal" {
         body: struct { lhs: []const u8, operator: []const u8, rhs: []const u8 },
     };
 
-    // var xy = [_][]const u8{ "x", "y" };
-
     const expected_values = [_]Expected{
         .{
             .token = "fn",
@@ -1018,6 +1046,108 @@ test "Function Literal" {
                                 }
                             },
                             else => unreachable,
+                        }
+                    },
+                    else => unreachable,
+                }
+            },
+            else => unreachable,
+        }
+    }
+}
+
+test "Call Expression" {
+    const input =
+        \\add(1, 2 * 3, 4 + 5)
+    ;
+
+    var lexer = Lexer.init(input);
+
+    // TODO: Memory management...
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    var allocator = arena.allocator();
+
+    var parser = try Parser.init(&lexer, allocator);
+    defer parser.deinit();
+
+    var program = try parser.parseProgram(allocator);
+    defer program.deinit();
+
+    // var buffer: [input.len * 2]u8 = undefined;
+    // var stream = std.io.fixedBufferStream(&buffer);
+    // program.write(stream.writer());
+    // std.debug.print("Call Expression:\n{s}\n", .{buffer});
+
+    if (parser.errors.items.len > 0) {
+        std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
+        for (parser.errors.items) |message| {
+            std.debug.print("- {s}\n", .{message});
+        }
+        try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
+
+    const ExpectedArgs = struct { lhs: []const u8, operator: []const u8, rhs: []const u8 };
+    var args = [_]ExpectedArgs{
+        .{ .lhs = "1", .operator = "", .rhs = "" },
+        .{ .lhs = "2", .operator = "*", .rhs = "3" },
+        .{ .lhs = "4", .operator = "+", .rhs = "5" },
+    };
+
+    const Expected = struct { token: []const u8, function: []const u8, arguments: []ExpectedArgs };
+    const expected_values = [_]Expected{
+        .{
+            .token = "add",
+            .function = "add",
+            .arguments = args[0..],
+        },
+    };
+
+    for (expected_values, program.statements.items) |expected, statement| {
+        try std.testing.expectEqualStrings(expected.token, statement.tokenLiteral());
+
+        switch (statement.*) {
+            .ExpressionStatement => |expr_statement| {
+                switch (expr_statement.expression.*) {
+                    .CallExpression => |call_expression| {
+                        try std.testing.expectEqualStrings("(", call_expression.tokenLiteral());
+                        switch (call_expression.function.*) {
+                            .Identifier => |identifier| {
+                                try std.testing.expectEqualStrings(expected.function, identifier.value);
+                                try std.testing.expectEqualStrings(expected.function, identifier.tokenLiteral());
+                            },
+                            else => unreachable,
+                        }
+                        try std.testing.expectEqual(expected.arguments.len, call_expression.arguments.items.len);
+                        for (expected.arguments, call_expression.arguments.items) |expected_arg, call_arg| {
+                            switch (call_arg.*) {
+                                .Integer => |integer| {
+                                    try std.testing.expectEqualStrings(expected_arg.lhs, integer.value);
+                                    try std.testing.expectEqualStrings(expected_arg.lhs, integer.tokenLiteral());
+                                },
+                                .InfixExpression => |infix_expression| {
+                                    try std.testing.expectEqualStrings(expected_arg.operator, infix_expression.operator);
+                                    try std.testing.expectEqualStrings(expected_arg.operator, infix_expression.tokenLiteral());
+                                    switch (infix_expression.left_operand.*) {
+                                        .Integer => |integer| {
+                                            try std.testing.expectEqualStrings(expected_arg.lhs, integer.value);
+                                            try std.testing.expectEqualStrings(expected_arg.lhs, integer.tokenLiteral());
+                                        },
+                                        else => unreachable,
+                                    }
+                                    switch (infix_expression.right_operand.*) {
+                                        .Integer => |integer| {
+                                            try std.testing.expectEqualStrings(expected_arg.rhs, integer.value);
+                                            try std.testing.expectEqualStrings(expected_arg.rhs, integer.tokenLiteral());
+                                        },
+                                        else => unreachable,
+                                    }
+                                },
+                                else => unreachable,
+                            }
                         }
                     },
                     else => unreachable,

@@ -80,6 +80,7 @@ fn parseExpression(self: *Parser, precedence: Precedence) ParseError!*Expression
         .False => try self.parseBoolean(),
         .LeftParen => try self.parseGroupedExpression(),
         .If => try self.parseIfExpression(),
+        .Function => try self.parseFunctionLiteral(),
         else => unreachable,
     };
 
@@ -151,6 +152,38 @@ fn parseIfExpression(self: *Parser) ParseError!*Expression {
 
     var expression = try self.allocator.create(Expression);
     expression.* = Expression{ .IfExpression = if_expression };
+
+    return expression;
+}
+
+fn parseFunctionLiteral(self: *Parser) ParseError!*Expression {
+    var function_literal = try Ast.FunctionLiteral.init(self.current_token, self.allocator);
+
+    _ = try self.expectPeek(.LeftParen);
+
+    while (!self.peekTokenIs(.RightParen)) {
+        self.nextToken();
+
+        var identifier = try self.allocator.create(Ast.Identifier);
+        identifier.* = Ast.Identifier{
+            .token = self.current_token,
+            .value = self.current_token.literal,
+        };
+
+        try function_literal.parameters.append(identifier);
+
+        if (self.peekTokenIs(.Comma)) {
+            self.nextToken();
+        }
+    }
+
+    _ = try self.expectPeek(.RightParen);
+    _ = try self.expectPeek(.LeftBrace);
+
+    function_literal.body = try self.parseBlockStatement();
+
+    var expression = try self.allocator.create(Expression);
+    expression.* = Expression{ .FunctionLiteral = function_literal };
 
     return expression;
 }
@@ -886,6 +919,105 @@ test "If Expression" {
                             }
                         } else {
                             try std.testing.expectEqual(expected.alternative, null);
+                        }
+                    },
+                    else => unreachable,
+                }
+            },
+            else => unreachable,
+        }
+    }
+}
+
+test "Function Literal" {
+    const input =
+        \\fn(x, y) { x + y; }
+    ;
+
+    var lexer = Lexer.init(input);
+
+    // TODO: Memory management...
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    var allocator = arena.allocator();
+
+    var parser = try Parser.init(&lexer, allocator);
+    defer parser.deinit();
+
+    var program = try parser.parseProgram(allocator);
+    defer program.deinit();
+
+    // var buffer: [input.len * 2]u8 = undefined;
+    // var stream = std.io.fixedBufferStream(&buffer);
+    // program.write(stream.writer());
+    // std.debug.print("Function Literal:\n{s}\n", .{buffer});
+
+    if (parser.errors.items.len > 0) {
+        std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
+        for (parser.errors.items) |message| {
+            std.debug.print("- {s}\n", .{message});
+        }
+        try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
+
+    const Expected = struct {
+        token: []const u8,
+        parameters: [2][]const u8,
+        body: struct { lhs: []const u8, operator: []const u8, rhs: []const u8 },
+    };
+
+    // var xy = [_][]const u8{ "x", "y" };
+
+    const expected_values = [_]Expected{
+        .{
+            .token = "fn",
+            .parameters = .{ "x", "y" },
+            .body = .{ .lhs = "x", .operator = "+", .rhs = "y" },
+        },
+    };
+
+    for (expected_values, program.statements.items) |expected, statement| {
+        try std.testing.expectEqualStrings(expected.token, statement.tokenLiteral());
+
+        switch (statement.*) {
+            .ExpressionStatement => |expr_statement| {
+                switch (expr_statement.expression.*) {
+                    .FunctionLiteral => |function_literal| {
+                        try std.testing.expectEqualStrings(expected.token, function_literal.tokenLiteral());
+                        try std.testing.expectEqual(expected.parameters.len, function_literal.parameters.items.len);
+                        for (expected.parameters, function_literal.parameters.items) |expected_param, function_param| {
+                            try std.testing.expectEqualStrings(expected_param, function_param.value);
+                            try std.testing.expectEqualStrings(expected_param, function_param.tokenLiteral());
+                        }
+                        try std.testing.expectEqual(@as(usize, 1), function_literal.body.statements.items.len);
+                        switch (function_literal.body.statements.items[0].*) {
+                            .ExpressionStatement => |body_statement| {
+                                switch (body_statement.expression.*) {
+                                    .InfixExpression => |infix_expression| {
+                                        try std.testing.expectEqualStrings(expected.body.operator, infix_expression.operator);
+                                        try std.testing.expectEqualStrings(expected.body.operator, infix_expression.tokenLiteral());
+                                        switch (infix_expression.left_operand.*) {
+                                            .Identifier => |identifier| {
+                                                try std.testing.expectEqualStrings(expected.body.lhs, identifier.value);
+                                                try std.testing.expectEqualStrings(expected.body.lhs, identifier.tokenLiteral());
+                                            },
+                                            else => unreachable,
+                                        }
+                                        switch (infix_expression.right_operand.*) {
+                                            .Identifier => |identifier| {
+                                                try std.testing.expectEqualStrings(expected.body.rhs, identifier.value);
+                                                try std.testing.expectEqualStrings(expected.body.rhs, identifier.tokenLiteral());
+                                            },
+                                            else => unreachable,
+                                        }
+                                    },
+                                    else => unreachable,
+                                }
+                            },
+                            else => unreachable,
                         }
                     },
                     else => unreachable,

@@ -79,6 +79,7 @@ fn parseExpression(self: *Parser, precedence: Precedence) ParseError!*Expression
         .True => try self.parseBoolean(),
         .False => try self.parseBoolean(),
         .LeftParen => try self.parseGroupedExpression(),
+        .If => try self.parseIfExpression(),
         else => unreachable,
     };
 
@@ -119,6 +120,54 @@ fn parseGroupedExpression(self: *Parser) ParseError!*Expression {
     }
 
     return expression;
+}
+
+fn parseIfExpression(self: *Parser) ParseError!*Expression {
+    var if_expression = try self.allocator.create(Ast.IfExpression);
+    if_expression.* = Ast.IfExpression{
+        .token = self.current_token,
+        .condition = undefined,
+        .consequence = undefined,
+        .alternative = null,
+    };
+
+    _ = try self.expectPeek(.LeftParen);
+
+    self.nextToken();
+    if_expression.condition = try self.parseExpression(.Lowest);
+
+    _ = try self.expectPeek(.RightParen);
+    _ = try self.expectPeek(.LeftBrace);
+
+    if_expression.consequence = try self.parseBlockStatement();
+
+    if (self.peekTokenIs(.Else)) {
+        self.nextToken();
+
+        _ = try self.expectPeek(.LeftBrace);
+
+        if_expression.alternative = try self.parseBlockStatement();
+    }
+
+    var expression = try self.allocator.create(Expression);
+    expression.* = Expression{ .IfExpression = if_expression };
+
+    return expression;
+}
+
+fn parseBlockStatement(self: *Parser) ParseError!*Ast.BlockStatement {
+    var block_statement = try Ast.BlockStatement.init(self.current_token, self.allocator);
+
+    self.nextToken();
+
+    while (!self.currentTokenIs(.RightBrace) and !self.currentTokenIs(.Eof)) {
+        if (try self.parseStatement()) |statement| {
+            try block_statement.statements.append(statement);
+        }
+        self.nextToken();
+    }
+
+    return block_statement;
 }
 
 fn parseExpressionStatement(self: *Parser) ParseError!*Statement {
@@ -604,7 +653,7 @@ test "Infix Operators" {
     // var buffer: [input.len * 2]u8 = undefined;
     // var stream = std.io.fixedBufferStream(&buffer);
     // program.write(stream.writer());
-    // std.debug.print("Prefix Operators:\n{s}\n", .{buffer});
+    // std.debug.print("Infix Operators:\n{s}\n", .{buffer});
 
     if (parser.errors.items.len > 0) {
         std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
@@ -719,6 +768,131 @@ test "Operator Precedence" {
         program.write(buf_writer.writer());
 
         try std.testing.expectEqualStrings(test_entry.expected, buffer);
+    }
+}
+
+test "If Expression" {
+    const input =
+        \\if (x < y) { x }
+        \\if (x < y) { x } else { y }
+    ;
+
+    var lexer = Lexer.init(input);
+
+    // TODO: Memory management...
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    var allocator = arena.allocator();
+
+    var parser = try Parser.init(&lexer, allocator);
+    defer parser.deinit();
+
+    var program = try parser.parseProgram(allocator);
+    defer program.deinit();
+
+    // var buffer: [input.len * 2]u8 = undefined;
+    // var stream = std.io.fixedBufferStream(&buffer);
+    // program.write(stream.writer());
+    // std.debug.print("If Expression:\n{s}\n", .{buffer});
+
+    if (parser.errors.items.len > 0) {
+        std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
+        for (parser.errors.items) |message| {
+            std.debug.print("- {s}\n", .{message});
+        }
+        try std.testing.expect(false);
+    }
+
+    try std.testing.expectEqual(@as(usize, 2), program.statements.items.len);
+
+    const Expected = struct {
+        token: []const u8,
+        condition: struct { lhs: []const u8, operator: []const u8, rhs: []const u8 },
+        consequence: []const u8,
+        alternative: ?[]const u8,
+    };
+
+    const expected_values = [_]Expected{
+        .{
+            .token = "if",
+            .condition = .{ .lhs = "x", .operator = "<", .rhs = "y" },
+            .consequence = "x",
+            .alternative = null,
+        },
+        .{
+            .token = "if",
+            .condition = .{ .lhs = "x", .operator = "<", .rhs = "y" },
+            .consequence = "x",
+            .alternative = "y",
+        },
+    };
+
+    for (expected_values, program.statements.items) |expected, statement| {
+        try std.testing.expectEqualStrings(expected.token, statement.tokenLiteral());
+
+        switch (statement.*) {
+            .ExpressionStatement => |expr_statement| {
+                switch (expr_statement.expression.*) {
+                    .IfExpression => |if_expression| {
+                        try std.testing.expectEqualStrings(expected.token, if_expression.tokenLiteral());
+                        switch (if_expression.condition.*) {
+                            .InfixExpression => |infix_expression| {
+                                try std.testing.expectEqualStrings(expected.condition.operator, infix_expression.operator);
+                                try std.testing.expectEqualStrings(expected.condition.operator, infix_expression.tokenLiteral());
+                                switch (infix_expression.left_operand.*) {
+                                    .Identifier => |identifier| {
+                                        try std.testing.expectEqualStrings(expected.condition.lhs, identifier.value);
+                                        try std.testing.expectEqualStrings(expected.condition.lhs, identifier.tokenLiteral());
+                                    },
+                                    else => unreachable,
+                                }
+                                switch (infix_expression.right_operand.*) {
+                                    .Identifier => |identifier| {
+                                        try std.testing.expectEqualStrings(expected.condition.rhs, identifier.value);
+                                        try std.testing.expectEqualStrings(expected.condition.rhs, identifier.tokenLiteral());
+                                    },
+                                    else => unreachable,
+                                }
+                            },
+                            else => unreachable,
+                        }
+                        try std.testing.expectEqual(@as(usize, 1), if_expression.consequence.statements.items.len);
+                        switch (if_expression.consequence.statements.items[0].*) {
+                            .ExpressionStatement => |consq_statement| {
+                                switch (consq_statement.expression.*) {
+                                    .Identifier => |identifier| {
+                                        try std.testing.expectEqualStrings(expected.consequence, identifier.value);
+                                        try std.testing.expectEqualStrings(expected.consequence, identifier.tokenLiteral());
+                                    },
+                                    else => unreachable,
+                                }
+                            },
+                            else => unreachable,
+                        }
+                        if (expected.alternative) |alternative| {
+                            try std.testing.expectEqual(@as(usize, 1), if_expression.alternative.?.statements.items.len);
+                            switch (if_expression.alternative.?.statements.items[0].*) {
+                                .ExpressionStatement => |alt_statement| {
+                                    switch (alt_statement.expression.*) {
+                                        .Identifier => |identifier| {
+                                            try std.testing.expectEqualStrings(alternative, identifier.value);
+                                            try std.testing.expectEqualStrings(alternative, identifier.tokenLiteral());
+                                        },
+                                        else => unreachable,
+                                    }
+                                },
+                                else => unreachable,
+                            }
+                        } else {
+                            try std.testing.expectEqual(expected.alternative, null);
+                        }
+                    },
+                    else => unreachable,
+                }
+            },
+            else => unreachable,
+        }
     }
 }
 

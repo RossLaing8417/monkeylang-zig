@@ -50,6 +50,7 @@ pub const Expression = union(enum) {
 
     PrefixExpression: *PrefixExpression,
     InfixExpression: *InfixExpression,
+    IfExpression: *IfExpression,
 
     pub fn tokenLiteral(self: Expression, writer: anytype) void {
         switch (self) {
@@ -224,5 +225,62 @@ pub const InfixExpression = struct {
         writer.writeAll(" ") catch unreachable;
         self.right_operand.write(writer);
         writer.writeAll(")") catch unreachable;
+    }
+};
+
+pub const IfExpression = struct {
+    token: Token,
+    condition: *Expression,
+    consequence: *BlockStatement,
+    alternative: ?*BlockStatement,
+
+    pub fn tokenLiteral(self: *const IfExpression) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: *const IfExpression, writer: anytype) void {
+        writer.writeAll("if ") catch unreachable;
+        self.condition.write(writer);
+        writer.writeAll(" ") catch unreachable;
+        self.consequence.write(writer);
+        if (self.alternative) |alternative| {
+            writer.writeAll("else ") catch unreachable;
+            alternative.write(writer);
+        }
+    }
+};
+
+pub const BlockStatement = struct {
+    token: Token,
+    statements: std.ArrayList(*Statement),
+    allocator: std.mem.Allocator,
+
+    pub fn init(token: Token, allocator: std.mem.Allocator) !*BlockStatement {
+        var program = try allocator.create(BlockStatement);
+        errdefer program.deinit();
+
+        program.* = BlockStatement{
+            .token = token,
+            .statements = try std.ArrayList(*Statement).initCapacity(allocator, INIT_PROG_CAPACITY),
+            .allocator = allocator,
+        };
+
+        return program;
+    }
+
+    pub fn deinit(self: *BlockStatement) void {
+        self.statements.deinit();
+        self.allocator.destroy(self);
+    }
+
+    pub fn tokenLiteral(self: *const BlockStatement) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: *const BlockStatement, writer: anytype) void {
+        for (self.statements.items) |statement| {
+            statement.write(writer);
+            writer.writeAll("\n") catch unreachable;
+        }
     }
 };

@@ -259,6 +259,10 @@ fn parseLetStatement(self: *Parser) ParseError!?*Statement {
 
     if (!try self.expectPeek(.Assign)) return null;
 
+    self.nextToken();
+
+    let_statement.value = try self.parseExpression(.Lowest);
+
     while (!self.currentTokenIs(.SemiColon)) {
         self.nextToken();
     }
@@ -275,7 +279,9 @@ fn parseReturnStatement(self: *Parser) ParseError!*Statement {
 
     self.nextToken();
 
-    while (!self.currentTokenIs(.SemiColon)) {
+    return_statement.return_value = try self.parseExpression(.Lowest);
+
+    if (self.peekTokenIs(.SemiColon)) {
         self.nextToken();
     }
 
@@ -467,17 +473,17 @@ test "Let Statement" {
                 try std.testing.expectEqualStrings(expected.identifier, let_statement.name.value);
                 try std.testing.expectEqualStrings(expected.identifier, let_statement.name.tokenLiteral());
 
-                // switch (let_statement.value.*) {
-                //     .Identifier => |identifier| {
-                //         try std.testing.expectEqualStrings(expected.value, identifier.value);
-                //         try std.testing.expectEqualStrings(expected.value, identifier.tokenLiteral());
-                //     },
-                //     .Integer => |integer| {
-                //         try std.testing.expectEqualStrings(expected.value, integer.value);
-                //         try std.testing.expectEqualStrings(expected.value, integer.tokenLiteral());
-                //     },
-                //     else => unreachable,
-                // }
+                switch (let_statement.value.*) {
+                    .Identifier => |identifier| {
+                        try std.testing.expectEqualStrings(expected.value, identifier.value);
+                        try std.testing.expectEqualStrings(expected.value, identifier.tokenLiteral());
+                    },
+                    .Integer => |integer| {
+                        try std.testing.expectEqualStrings(expected.value, integer.value);
+                        try std.testing.expectEqualStrings(expected.value, integer.tokenLiteral());
+                    },
+                    else => unreachable,
+                }
             },
             else => unreachable,
         }
@@ -520,23 +526,29 @@ test "Return Statement" {
 
     try std.testing.expectEqual(program.statements.items.len, 3);
 
-    const Expected = struct { value: []const u8 };
+    const Expected = struct { name: []const u8, value: []const u8 };
     const expected_values = [_]Expected{
-        .{ .value = "return" },
-        .{ .value = "return" },
-        .{ .value = "return" },
+        .{ .name = "return", .value = "5" },
+        .{ .name = "return", .value = "10" },
+        .{ .name = "return", .value = "993322" },
     };
 
     for (expected_values, program.statements.items) |expected, statement| {
-        try std.testing.expectEqualStrings(expected.value, statement.tokenLiteral());
+        try std.testing.expectEqualStrings(expected.name, statement.tokenLiteral());
 
-        // switch (statement) {
-        //     .ReturnStatement => |return_statement| {
-        //         try std.testing.expectEqualStrings(expected.value, return_statement.name.value);
-        //         try std.testing.expectEqualStrings(expected.value, return_statement.name.tokenLiteral());
-        //     },
-        //     else => unreachable,
-        // }
+        switch (statement.*) {
+            .ReturnStatement => |return_statement| {
+                try std.testing.expectEqualStrings(expected.name, return_statement.tokenLiteral());
+                switch (return_statement.return_value.*) {
+                    .Integer => |integer| {
+                        try std.testing.expectEqualStrings(expected.value, integer.value);
+                        try std.testing.expectEqualStrings(expected.value, integer.tokenLiteral());
+                    },
+                    else => unreachable,
+                }
+            },
+            else => unreachable,
+        }
     }
 }
 

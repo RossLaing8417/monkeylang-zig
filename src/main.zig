@@ -6,7 +6,15 @@ pub fn main() !void {
     const stdin = std.io.getStdIn();
     const stdout = std.io.getStdOut();
 
-    var repl = Repl.init(stdin, stdout);
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        const result = gpa.deinit();
+        if (result == .leak) {
+            std.debug.print("Leak!\n", .{});
+        }
+    }
+
+    var repl = Repl.init(gpa.allocator(), stdin, stdout);
 
     try repl.loop();
 }

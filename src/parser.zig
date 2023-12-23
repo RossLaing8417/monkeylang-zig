@@ -393,7 +393,7 @@ fn expectPeek(self: *Parser, token_type: Token.Type) ParseError!bool {
 }
 
 fn peekError(self: *Parser, token_type: Token.Type) ParseError!void {
-    try self.errors.append(try std.fmt.allocPrint(self.allocator, "Expected token {s} but instead got token {s}", .{
+    try self.errors.append(try std.fmt.allocPrint(self.allocator, "Expected token '{s}' but got token '{s}' instead", .{
         @tagName(token_type),
         @tagName(self.peek_token.type),
     }));

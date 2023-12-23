@@ -3,15 +3,18 @@ const Repl = @This();
 const std = @import("std");
 
 const Lexer = @import("lexer.zig");
+const Parser = @import("parser.zig");
 
 const PROMPT = ">> ";
 const MAX_LENGTH = 256;
 
+allocator: std.mem.Allocator,
 in_file: std.fs.File,
 out_file: std.fs.File,
 
-pub fn init(in_file: std.fs.File, out_file: std.fs.File) Repl {
+pub fn init(allocator: std.mem.Allocator, in_file: std.fs.File, out_file: std.fs.File) Repl {
     return Repl{
+        .allocator = allocator,
         .in_file = in_file,
         .out_file = out_file,
     };
@@ -30,13 +33,28 @@ pub fn loop(self: *Repl) !void {
 
         while (try in_stream.readUntilDelimiterOrEof(&buffer, '\n')) |line| {
             var lexer = Lexer.init(line);
+            var parser = try Parser.init(&lexer, self.allocator);
+            defer parser.deinit();
 
-            while (true) {
-                const token = lexer.nextToken();
-                if (token.type == .Eof) break;
+            var program = try parser.parseProgram(self.allocator);
 
-                try out_stream.print("{s} = '{s}'\n", .{ @tagName(token.type), token.literal });
+            if (parser.errors.items.len > 0) {
+                try out_stream.writeAll("Errors:");
+                for (parser.errors.items) |err| {
+                    try out_stream.writeAll("\n\t");
+                    try out_stream.writeAll(err);
+                }
+                try out_stream.writeAll("\n");
+                break;
             }
+
+            program.write(out_stream);
+
+            // while (true) {
+            //     const token = lexer.nextToken();
+            //     if (token.type == .Eof) break;
+            //     try out_stream.print("{s} = '{s}'\n", .{ @tagName(token.type), token.literal });
+            // }
 
             break;
         }

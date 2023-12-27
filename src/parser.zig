@@ -305,12 +305,10 @@ fn parseIdentifier(self: *Parser) ParseError!*Expression {
 }
 
 fn parseInteger(self: *Parser) ParseError!*Expression {
-    _ = try std.fmt.parseInt(i64, self.current_token.literal, 10);
-
     var integer = try self.allocator.create(Ast.Integer);
     integer.* = Ast.Integer{
         .token = self.current_token,
-        .value = self.current_token.literal,
+        .value = try std.fmt.parseInt(i64, self.current_token.literal, 10),
     };
 
     var expression = try self.allocator.create(Expression);
@@ -323,7 +321,7 @@ fn parseBoolean(self: *Parser) ParseError!*Expression {
     var boolean = try self.allocator.create(Ast.Boolean);
     boolean.* = Ast.Boolean{
         .token = self.current_token,
-        .value = self.current_token.literal,
+        .value = std.mem.eql(u8, self.current_token.literal, "true"),
     };
 
     var expression = try self.allocator.create(Expression);
@@ -458,11 +456,11 @@ test "Let Statement" {
 
     try std.testing.expectEqual(program.statements.items.len, 3);
 
-    const Expected = struct { identifier: []const u8, value: []const u8 };
+    const Expected = struct { identifier: []const u8, literal: []const u8, value: i64 };
     const expected_values = [_]Expected{
-        .{ .identifier = "x", .value = "5" },
-        .{ .identifier = "y", .value = "10" },
-        .{ .identifier = "foobar", .value = "838383" },
+        .{ .identifier = "x", .literal = "5", .value = 5 },
+        .{ .identifier = "y", .literal = "10", .value = 10 },
+        .{ .identifier = "foobar", .literal = "838383", .value = 838383 },
     };
 
     for (expected_values, program.statements.items) |expected, statement| {
@@ -475,12 +473,12 @@ test "Let Statement" {
 
                 switch (let_statement.value.*) {
                     .Identifier => |identifier| {
-                        try std.testing.expectEqualStrings(expected.value, identifier.value);
-                        try std.testing.expectEqualStrings(expected.value, identifier.tokenLiteral());
+                        try std.testing.expectEqualStrings(expected.identifier, identifier.value);
+                        try std.testing.expectEqualStrings(expected.identifier, identifier.tokenLiteral());
                     },
                     .Integer => |integer| {
-                        try std.testing.expectEqualStrings(expected.value, integer.value);
-                        try std.testing.expectEqualStrings(expected.value, integer.tokenLiteral());
+                        try std.testing.expectEqual(expected.value, integer.value);
+                        try std.testing.expectEqualStrings(expected.literal, integer.tokenLiteral());
                     },
                     else => unreachable,
                 }
@@ -526,11 +524,11 @@ test "Return Statement" {
 
     try std.testing.expectEqual(program.statements.items.len, 3);
 
-    const Expected = struct { name: []const u8, value: []const u8 };
+    const Expected = struct { name: []const u8, literal: []const u8, value: i64 };
     const expected_values = [_]Expected{
-        .{ .name = "return", .value = "5" },
-        .{ .name = "return", .value = "10" },
-        .{ .name = "return", .value = "993322" },
+        .{ .name = "return", .literal = "5", .value = 5 },
+        .{ .name = "return", .literal = "10", .value = 10 },
+        .{ .name = "return", .literal = "993322", .value = 993322 },
     };
 
     for (expected_values, program.statements.items) |expected, statement| {
@@ -541,8 +539,8 @@ test "Return Statement" {
                 try std.testing.expectEqualStrings(expected.name, return_statement.tokenLiteral());
                 switch (return_statement.return_value.*) {
                     .Integer => |integer| {
-                        try std.testing.expectEqualStrings(expected.value, integer.value);
-                        try std.testing.expectEqualStrings(expected.value, integer.tokenLiteral());
+                        try std.testing.expectEqual(expected.value, integer.value);
+                        try std.testing.expectEqualStrings(expected.literal, integer.tokenLiteral());
                     },
                     else => unreachable,
                 }
@@ -589,31 +587,31 @@ test "Identifier/Literal Expression" {
 
     try std.testing.expectEqual(program.statements.items.len, 4);
 
-    const Expected = struct { value: []const u8 };
+    const Expected = struct { literal: []const u8, value: union { string: []const u8, int: i64, boolean: bool } };
     const expected_values = [_]Expected{
-        .{ .value = "foobar" },
-        .{ .value = "5" },
-        .{ .value = "true" },
-        .{ .value = "false" },
+        .{ .literal = "foobar", .value = .{ .string = "foobar" } },
+        .{ .literal = "5", .value = .{ .int = 5 } },
+        .{ .literal = "true", .value = .{ .boolean = true } },
+        .{ .literal = "false", .value = .{ .boolean = false } },
     };
 
     for (expected_values, program.statements.items) |expected, statement| {
-        try std.testing.expectEqualStrings(expected.value, statement.tokenLiteral());
+        try std.testing.expectEqualStrings(expected.literal, statement.tokenLiteral());
 
         switch (statement.*) {
             .ExpressionStatement => |expr_statement| {
                 switch (expr_statement.expression.*) {
                     .Identifier => |identifier| {
-                        try std.testing.expectEqualStrings(expected.value, identifier.value);
-                        try std.testing.expectEqualStrings(expected.value, identifier.tokenLiteral());
+                        try std.testing.expectEqualStrings(expected.value.string, identifier.value);
+                        try std.testing.expectEqualStrings(expected.literal, identifier.tokenLiteral());
                     },
                     .Integer => |integer| {
-                        try std.testing.expectEqualStrings(expected.value, integer.value);
-                        try std.testing.expectEqualStrings(expected.value, integer.tokenLiteral());
+                        try std.testing.expectEqual(expected.value.int, integer.value);
+                        try std.testing.expectEqualStrings(expected.literal, integer.tokenLiteral());
                     },
                     .Boolean => |boolean| {
-                        try std.testing.expectEqualStrings(expected.value, boolean.value);
-                        try std.testing.expectEqualStrings(expected.value, boolean.tokenLiteral());
+                        try std.testing.expectEqual(expected.value.boolean, boolean.value);
+                        try std.testing.expectEqualStrings(expected.literal, boolean.tokenLiteral());
                     },
                     else => unreachable,
                 }
@@ -658,10 +656,10 @@ test "Prefix Operators" {
 
     try std.testing.expectEqual(program.statements.items.len, 2);
 
-    const Expected = struct { prefix: []const u8, value: []const u8 };
+    const Expected = struct { prefix: []const u8, literal: []const u8, value: i64 };
     const expected_values = [_]Expected{
-        .{ .prefix = "!", .value = "5" },
-        .{ .prefix = "-", .value = "15" },
+        .{ .prefix = "!", .literal = "5", .value = 5 },
+        .{ .prefix = "-", .literal = "15", .value = 15 },
     };
 
     for (expected_values, program.statements.items) |expected, statement| {
@@ -674,13 +672,9 @@ test "Prefix Operators" {
                         try std.testing.expectEqualStrings(expected.prefix, prefix_expression.operator);
                         try std.testing.expectEqualStrings(expected.prefix, prefix_expression.tokenLiteral());
                         switch (prefix_expression.operand.*) {
-                            .Identifier => |identifier| {
-                                try std.testing.expectEqualStrings(expected.value, identifier.value);
-                                try std.testing.expectEqualStrings(expected.value, identifier.tokenLiteral());
-                            },
                             .Integer => |integer| {
-                                try std.testing.expectEqualStrings(expected.value, integer.value);
-                                try std.testing.expectEqualStrings(expected.value, integer.tokenLiteral());
+                                try std.testing.expectEqual(expected.value, integer.value);
+                                try std.testing.expectEqualStrings(expected.literal, integer.tokenLiteral());
                             },
                             else => unreachable,
                         }
@@ -737,23 +731,24 @@ test "Infix Operators" {
 
     try std.testing.expectEqual(program.statements.items.len, 11);
 
-    const Expected = struct { lhs: []const u8, operator: []const u8, rhs: []const u8 };
+    const Value = struct { literal: []const u8, value: union { int: i64, boolean: bool } };
+    const Expected = struct { lhs: Value, operator: []const u8, rhs: Value };
     const expected_values = [_]Expected{
-        .{ .lhs = "5", .operator = "+", .rhs = "5" },
-        .{ .lhs = "5", .operator = "-", .rhs = "5" },
-        .{ .lhs = "5", .operator = "*", .rhs = "5" },
-        .{ .lhs = "5", .operator = "/", .rhs = "5" },
-        .{ .lhs = "5", .operator = ">", .rhs = "5" },
-        .{ .lhs = "5", .operator = "<", .rhs = "5" },
-        .{ .lhs = "5", .operator = "==", .rhs = "5" },
-        .{ .lhs = "5", .operator = "!=", .rhs = "5" },
-        .{ .lhs = "true", .operator = "==", .rhs = "true" },
-        .{ .lhs = "true", .operator = "!=", .rhs = "false" },
-        .{ .lhs = "false", .operator = "==", .rhs = "false" },
+        .{ .lhs = .{ .literal = "5", .value = .{ .int = 5 } }, .operator = "+", .rhs = .{ .literal = "5", .value = .{ .int = 5 } } },
+        .{ .lhs = .{ .literal = "5", .value = .{ .int = 5 } }, .operator = "-", .rhs = .{ .literal = "5", .value = .{ .int = 5 } } },
+        .{ .lhs = .{ .literal = "5", .value = .{ .int = 5 } }, .operator = "*", .rhs = .{ .literal = "5", .value = .{ .int = 5 } } },
+        .{ .lhs = .{ .literal = "5", .value = .{ .int = 5 } }, .operator = "/", .rhs = .{ .literal = "5", .value = .{ .int = 5 } } },
+        .{ .lhs = .{ .literal = "5", .value = .{ .int = 5 } }, .operator = ">", .rhs = .{ .literal = "5", .value = .{ .int = 5 } } },
+        .{ .lhs = .{ .literal = "5", .value = .{ .int = 5 } }, .operator = "<", .rhs = .{ .literal = "5", .value = .{ .int = 5 } } },
+        .{ .lhs = .{ .literal = "5", .value = .{ .int = 5 } }, .operator = "==", .rhs = .{ .literal = "5", .value = .{ .int = 5 } } },
+        .{ .lhs = .{ .literal = "5", .value = .{ .int = 5 } }, .operator = "!=", .rhs = .{ .literal = "5", .value = .{ .int = 5 } } },
+        .{ .lhs = .{ .literal = "true", .value = .{ .boolean = true } }, .operator = "==", .rhs = .{ .literal = "true", .value = .{ .boolean = true } } },
+        .{ .lhs = .{ .literal = "true", .value = .{ .boolean = true } }, .operator = "!=", .rhs = .{ .literal = "false", .value = .{ .boolean = false } } },
+        .{ .lhs = .{ .literal = "false", .value = .{ .boolean = false } }, .operator = "==", .rhs = .{ .literal = "false", .value = .{ .boolean = false } } },
     };
 
     for (expected_values, program.statements.items) |expected, statement| {
-        try std.testing.expectEqualStrings(expected.lhs, statement.tokenLiteral());
+        try std.testing.expectEqualStrings(expected.lhs.literal, statement.tokenLiteral());
 
         switch (statement.*) {
             .ExpressionStatement => |expr_statement| {
@@ -763,23 +758,23 @@ test "Infix Operators" {
                         try std.testing.expectEqualStrings(expected.operator, infix_expression.tokenLiteral());
                         switch (infix_expression.left_operand.*) {
                             .Integer => |integer| {
-                                try std.testing.expectEqualStrings(expected.lhs, integer.value);
-                                try std.testing.expectEqualStrings(expected.lhs, integer.tokenLiteral());
+                                try std.testing.expectEqual(expected.lhs.value.int, integer.value);
+                                try std.testing.expectEqualStrings(expected.lhs.literal, integer.tokenLiteral());
                             },
                             .Boolean => |boolean| {
-                                try std.testing.expectEqualStrings(expected.lhs, boolean.value);
-                                try std.testing.expectEqualStrings(expected.lhs, boolean.tokenLiteral());
+                                try std.testing.expectEqual(expected.lhs.value.boolean, boolean.value);
+                                try std.testing.expectEqualStrings(expected.lhs.literal, boolean.tokenLiteral());
                             },
                             else => unreachable,
                         }
                         switch (infix_expression.right_operand.*) {
                             .Integer => |integer| {
-                                try std.testing.expectEqualStrings(expected.rhs, integer.value);
-                                try std.testing.expectEqualStrings(expected.rhs, integer.tokenLiteral());
+                                try std.testing.expectEqual(expected.rhs.value.int, integer.value);
+                                try std.testing.expectEqualStrings(expected.rhs.literal, integer.tokenLiteral());
                             },
                             .Boolean => |boolean| {
-                                try std.testing.expectEqualStrings(expected.rhs, boolean.value);
-                                try std.testing.expectEqualStrings(expected.rhs, boolean.tokenLiteral());
+                                try std.testing.expectEqual(expected.rhs.value.boolean, boolean.value);
+                                try std.testing.expectEqualStrings(expected.rhs.literal, boolean.tokenLiteral());
                             },
                             else => unreachable,
                         }
@@ -1102,11 +1097,12 @@ test "Call Expression" {
 
     try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
 
-    const ExpectedArgs = struct { lhs: []const u8, operator: []const u8, rhs: []const u8 };
+    const Value = struct { literal: []const u8, value: i64 };
+    const ExpectedArgs = struct { lhs: Value, operator: []const u8, rhs: Value };
     var args = [_]ExpectedArgs{
-        .{ .lhs = "1", .operator = "", .rhs = "" },
-        .{ .lhs = "2", .operator = "*", .rhs = "3" },
-        .{ .lhs = "4", .operator = "+", .rhs = "5" },
+        .{ .lhs = .{ .literal = "1", .value = 1 }, .operator = "", .rhs = .{ .literal = "", .value = undefined } },
+        .{ .lhs = .{ .literal = "2", .value = 2 }, .operator = "*", .rhs = .{ .literal = "3", .value = 3 } },
+        .{ .lhs = .{ .literal = "4", .value = 4 }, .operator = "+", .rhs = .{ .literal = "5", .value = 5 } },
     };
 
     const Expected = struct { token: []const u8, function: []const u8, arguments: []ExpectedArgs };
@@ -1137,23 +1133,23 @@ test "Call Expression" {
                         for (expected.arguments, call_expression.arguments.items) |expected_arg, call_arg| {
                             switch (call_arg.*) {
                                 .Integer => |integer| {
-                                    try std.testing.expectEqualStrings(expected_arg.lhs, integer.value);
-                                    try std.testing.expectEqualStrings(expected_arg.lhs, integer.tokenLiteral());
+                                    try std.testing.expectEqual(expected_arg.lhs.value, integer.value);
+                                    try std.testing.expectEqualStrings(expected_arg.lhs.literal, integer.tokenLiteral());
                                 },
                                 .InfixExpression => |infix_expression| {
                                     try std.testing.expectEqualStrings(expected_arg.operator, infix_expression.operator);
                                     try std.testing.expectEqualStrings(expected_arg.operator, infix_expression.tokenLiteral());
                                     switch (infix_expression.left_operand.*) {
                                         .Integer => |integer| {
-                                            try std.testing.expectEqualStrings(expected_arg.lhs, integer.value);
-                                            try std.testing.expectEqualStrings(expected_arg.lhs, integer.tokenLiteral());
+                                            try std.testing.expectEqual(expected_arg.lhs.value, integer.value);
+                                            try std.testing.expectEqualStrings(expected_arg.lhs.literal, integer.tokenLiteral());
                                         },
                                         else => unreachable,
                                     }
                                     switch (infix_expression.right_operand.*) {
                                         .Integer => |integer| {
-                                            try std.testing.expectEqualStrings(expected_arg.rhs, integer.value);
-                                            try std.testing.expectEqualStrings(expected_arg.rhs, integer.tokenLiteral());
+                                            try std.testing.expectEqual(expected_arg.rhs.value, integer.value);
+                                            try std.testing.expectEqualStrings(expected_arg.rhs.literal, integer.tokenLiteral());
                                         },
                                         else => unreachable,
                                     }

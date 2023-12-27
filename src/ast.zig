@@ -166,27 +166,27 @@ pub const Identifier = struct {
 
 pub const Integer = struct {
     token: Token,
-    value: []const u8, // i64?
+    value: i64,
 
     pub fn tokenLiteral(self: *const Integer) []const u8 {
         return self.token.literal;
     }
 
     pub fn write(self: *const Integer, writer: anytype) void {
-        writer.writeAll(self.value) catch unreachable;
+        std.fmt.format(writer, "{d}", .{self.value}) catch unreachable;
     }
 };
 
 pub const Boolean = struct {
     token: Token,
-    value: []const u8, // bool?
+    value: bool,
 
     pub fn tokenLiteral(self: *const Boolean) []const u8 {
         return self.token.literal;
     }
 
     pub fn write(self: *const Boolean, writer: anytype) void {
-        writer.writeAll(self.value) catch unreachable;
+        std.fmt.format(writer, "{}", .{self.value}) catch unreachable;
     }
 };
 

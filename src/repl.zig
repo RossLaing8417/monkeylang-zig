@@ -5,7 +5,7 @@ const std = @import("std");
 const Lexer = @import("lexer.zig");
 const Parser = @import("parser.zig");
 const Ast = @import("ast.zig");
-const Object = @import("object.zig");
+const Evaluator = @import("evaluator.zig");
 
 const PROMPT = ">> ";
 const MAX_LENGTH = 256;
@@ -51,7 +51,7 @@ pub fn loop(self: *Repl) !void {
             }
 
             var statement = Ast.Statement{ .Program = program };
-            var result = Object.eval(.{ .Statement = &statement });
+            var result = Evaluator.eval(.{ .Statement = &statement });
 
             try result.inspect(out_stream);
             try out_stream.writeAll("\n");

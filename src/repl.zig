@@ -4,6 +4,8 @@ const std = @import("std");
 
 const Lexer = @import("lexer.zig");
 const Parser = @import("parser.zig");
+const Ast = @import("ast.zig");
+const Object = @import("object.zig");
 
 const PROMPT = ">> ";
 const MAX_LENGTH = 256;
@@ -48,13 +50,11 @@ pub fn loop(self: *Repl) !void {
                 break;
             }
 
-            program.write(out_stream);
+            var statement = Ast.Statement{ .Program = program };
+            var result = Object.eval(.{ .Statement = &statement });
 
-            // while (true) {
-            //     const token = lexer.nextToken();
-            //     if (token.type == .Eof) break;
-            //     try out_stream.print("{s} = '{s}'\n", .{ @tagName(token.type), token.literal });
-            // }
+            try result.inspect(out_stream);
+            try out_stream.writeAll("\n");
 
             break;
         }

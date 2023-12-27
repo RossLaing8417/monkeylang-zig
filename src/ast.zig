@@ -8,14 +8,14 @@ pub const Node = union(enum) {
     Statement: *Statement,
     Expression: *Expression,
 
-    pub fn tokenLiteral(self: Node) []const u8 {
-        switch (self) {
+    pub fn tokenLiteral(self: *const Node) []const u8 {
+        switch (self.*) {
             inline else => |node| return node.tokenLiteral(),
         }
     }
 
-    pub fn write(self: Node, writer: anytype) void {
-        switch (self) {
+    pub fn write(self: *const Node, writer: anytype) void {
+        switch (self.*) {
             inline else => |node| node.write(writer),
         }
     }
@@ -28,14 +28,14 @@ pub const Statement = union(enum) {
     ReturnStatement: *ReturnStatement,
     ExpressionStatement: *ExpressionStatement,
 
-    pub fn tokenLiteral(self: Statement) []const u8 {
-        switch (self) {
+    pub fn tokenLiteral(self: *const Statement) []const u8 {
+        switch (self.*) {
             inline else => |statement| return statement.tokenLiteral(),
         }
     }
 
-    pub fn write(self: Statement, writer: anytype) void {
-        switch (self) {
+    pub fn write(self: *const Statement, writer: anytype) void {
+        switch (self.*) {
             inline else => |statement| statement.write(writer),
         }
     }
@@ -52,14 +52,14 @@ pub const Expression = union(enum) {
     FunctionLiteral: *FunctionLiteral,
     CallExpression: *CallExpression,
 
-    pub fn tokenLiteral(self: Expression, writer: anytype) void {
-        switch (self) {
+    pub fn tokenLiteral(self: *const Expression, writer: anytype) void {
+        switch (self.*) {
             inline else => |expression| return expression.tokenLiteral(writer),
         }
     }
 
-    pub fn write(self: Expression, writer: anytype) void {
-        switch (self) {
+    pub fn write(self: *const Expression, writer: anytype) void {
+        switch (self.*) {
             inline else => |expression| expression.write(writer),
         }
     }

@@ -9,9 +9,9 @@ pub const Object = union(enum) {
     Boolean: Boolean,
     Null: Null,
 
-    pub fn inspect(self: *@This(), writer: anytype) []const u8 {
-        switch (self) {
-            inline else => |object| object.inspect(writer),
+    pub fn inspect(self: *const Object, writer: anytype) !void {
+        switch (self.*) {
+            inline else => |object| try object.inspect(writer),
         }
     }
 };
@@ -19,22 +19,22 @@ pub const Object = union(enum) {
 pub const Integer = struct {
     value: i64,
 
-    pub fn inspect(self: *@This(), writer: anytype) !void {
-        return std.fmt.format(writer, "{d}", .{self.value});
+    pub fn inspect(self: *const Integer, writer: anytype) !void {
+        try writer.print("{d}", .{self.value});
     }
 };
 
 pub const Boolean = struct {
     value: bool,
 
-    pub fn inspect(self: *@This(), writer: anytype) !void {
-        return std.fmt.format(writer, "{}", .{self.value});
+    pub fn inspect(self: *const Boolean, writer: anytype) !void {
+        try writer.print("{}", .{self.value});
     }
 };
 
 pub const Null = struct {
-    pub fn inspect(_: *@This(), writer: anytype) !void {
-        return std.fmt.format(writer, "null", .{});
+    pub fn inspect(_: *const Null, writer: anytype) !void {
+        try writer.writeAll("null");
     }
 };
 

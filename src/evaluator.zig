@@ -31,6 +31,11 @@ pub fn eval(node: Ast.Node) Object.Object {
                     var operand = eval(.{ .Expression = prefix_expr.operand });
                     return evalPrefixExpression(prefix_expr.token, operand);
                 },
+                .InfixExpression => |infix_expr| {
+                    var left_operand = eval(.{ .Expression = infix_expr.left_operand });
+                    var right_operand = eval(.{ .Expression = infix_expr.right_operand });
+                    return evalInfixExpression(infix_expr.token, left_operand, right_operand);
+                },
                 else => unreachable,
             }
         },
@@ -57,6 +62,39 @@ fn evalPrefixExpression(operator: Lexer.Token, operand: Object.Object) Object.Ob
     }
 }
 
+fn evalInfixExpression(operator: Lexer.Token, left_operand: Object.Object, right_operand: Object.Object) Object.Object {
+    if (left_operand == .Integer and right_operand == .Integer) {
+        return evalIntegerInfixExpression(operator, left_operand, right_operand);
+    }
+    if (left_operand == .Boolean and right_operand == .Boolean) {
+        return evalBooleanInfixExpression(operator, left_operand, right_operand);
+    }
+
+    return .{ .Null = .{} };
+}
+
+fn evalIntegerInfixExpression(operator: Lexer.Token, left_operand: Object.Object, right_operand: Object.Object) Object.Object {
+    switch (operator.type) {
+        .Plus => return .{ .Integer = .{ .value = left_operand.Integer.value + right_operand.Integer.value } },
+        .Minus => return .{ .Integer = .{ .value = left_operand.Integer.value - right_operand.Integer.value } },
+        .Asterisk => return .{ .Integer = .{ .value = left_operand.Integer.value * right_operand.Integer.value } },
+        .Slash => return .{ .Integer = .{ .value = @divExact(left_operand.Integer.value, right_operand.Integer.value) } },
+        .Equal => return .{ .Boolean = .{ .value = left_operand.Integer.value == right_operand.Integer.value } },
+        .NotEqual => return .{ .Boolean = .{ .value = left_operand.Integer.value != right_operand.Integer.value } },
+        .LessThan => return .{ .Boolean = .{ .value = left_operand.Integer.value < right_operand.Integer.value } },
+        .GreaterThan => return .{ .Boolean = .{ .value = left_operand.Integer.value > right_operand.Integer.value } },
+        inline else => unreachable,
+    }
+}
+
+fn evalBooleanInfixExpression(operator: Lexer.Token, left_operand: Object.Object, right_operand: Object.Object) Object.Object {
+    switch (operator.type) {
+        .Equal => return .{ .Boolean = .{ .value = left_operand.Boolean.value == right_operand.Boolean.value } },
+        .NotEqual => return .{ .Boolean = .{ .value = left_operand.Boolean.value != right_operand.Boolean.value } },
+        inline else => unreachable,
+    }
+}
+
 fn evalBangOperator(operand: Object.Object) Object.Object {
     switch (operand) {
         .Boolean => |boolean| return .{ .Boolean = .{ .value = !boolean.value } },
@@ -66,7 +104,10 @@ fn evalBangOperator(operand: Object.Object) Object.Object {
 }
 
 fn evalNegativeOperator(operand: Object.Object) Object.Object {
-    return .{ .Integer = .{ .value = -operand.Integer.value } };
+    switch (operand) {
+        .Integer => return .{ .Integer = .{ .value = -operand.Integer.value } },
+        inline else => return .{ .Null = .{} },
+    }
 }
 
 test "Eval Integer Expression" {
@@ -76,6 +117,17 @@ test "Eval Integer Expression" {
         .{ .input = "10", .expected = 10 },
         .{ .input = "-5", .expected = -5 },
         .{ .input = "-10", .expected = -10 },
+        .{ .input = "5 + 5 + 5 + 5 - 10", .expected = 10 },
+        .{ .input = "2 * 2 * 2 * 2 * 2", .expected = 32 },
+        .{ .input = "-50 + 100 + -50", .expected = 0 },
+        .{ .input = "5 * 2 + 10", .expected = 20 },
+        .{ .input = "5 + 2 * 10", .expected = 25 },
+        .{ .input = "20 + 2 * -10", .expected = 0 },
+        .{ .input = "50 / 2 * 2 + 10", .expected = 60 },
+        .{ .input = "2 * (5 + 10)", .expected = 30 },
+        .{ .input = "3 * 3 * 3 + 10", .expected = 37 },
+        .{ .input = "3 * (3 * 3) + 10", .expected = 37 },
+        .{ .input = "(5 + 10 * 2 + 15 / 3) * 2 + -10", .expected = 50 },
     };
 
     for (input) |test_input| {
@@ -117,6 +169,25 @@ test "Eval Boolean Expression" {
     const input = [_]Input{
         .{ .input = "true", .expected = true },
         .{ .input = "false", .expected = false },
+        .{ .input = "true", .expected = true },
+        .{ .input = "false", .expected = false },
+        .{ .input = "1 < 2", .expected = true },
+        .{ .input = "1 > 2", .expected = false },
+        .{ .input = "1 < 1", .expected = false },
+        .{ .input = "1 > 1", .expected = false },
+        .{ .input = "1 == 1", .expected = true },
+        .{ .input = "1 != 1", .expected = false },
+        .{ .input = "1 == 2", .expected = false },
+        .{ .input = "1 != 2", .expected = true },
+        .{ .input = "true == true", .expected = true },
+        .{ .input = "false == false", .expected = true },
+        .{ .input = "true == false", .expected = false },
+        .{ .input = "true != false", .expected = true },
+        .{ .input = "false != true", .expected = true },
+        .{ .input = "(1 < 2) == true", .expected = true },
+        .{ .input = "(1 < 2) == false", .expected = false },
+        .{ .input = "(1 > 2) == true", .expected = false },
+        .{ .input = "(1 > 2) == false", .expected = true },
     };
 
     for (input) |test_input| {

@@ -52,6 +52,7 @@ fn evalStatements(statements: []*Ast.Statement) Object.Object {
 fn evalPrefixExpression(operator: Lexer.Token, operand: Object.Object) Object.Object {
     switch (operator.type) {
         .Bang => return evalBangOperator(operand),
+        .Minus => return evalNegativeOperator(operand),
         inline else => unreachable,
     }
 }
@@ -64,11 +65,17 @@ fn evalBangOperator(operand: Object.Object) Object.Object {
     }
 }
 
+fn evalNegativeOperator(operand: Object.Object) Object.Object {
+    return .{ .Integer = .{ .value = -operand.Integer.value } };
+}
+
 test "Eval Integer Expression" {
     const Input = struct { input: []const u8, expected: i64 };
     const input = [_]Input{
         .{ .input = "5", .expected = 5 },
         .{ .input = "10", .expected = 10 },
+        .{ .input = "-5", .expected = -5 },
+        .{ .input = "-10", .expected = -10 },
     };
 
     for (input) |test_input| {

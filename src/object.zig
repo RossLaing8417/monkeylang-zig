@@ -1,7 +1,6 @@
 pub const Object = union(enum) {
-    Integer: Integer,
-    Boolean: Boolean,
-    Null: Null,
+    Literal: Literal,
+    ReturnValue: Literal,
 
     pub fn inspect(self: *const Object, writer: anytype) !void {
         switch (self.*) {
@@ -10,18 +9,30 @@ pub const Object = union(enum) {
     }
 };
 
+pub const Literal = union(enum) {
+    Integer: Integer,
+    Boolean: Boolean,
+    Null: Null,
+
+    pub fn inspect(self: *const Literal, writer: anytype) !void {
+        switch (self.*) {
+            inline else => |literal| try literal.inspect(writer),
+        }
+    }
+};
+
 pub const Integer = struct {
     value: i64,
 
-    pub fn inspect(self: *const Integer, writer: anytype) !void {
-        try writer.print("{d}", .{self.value});
+    pub fn inspect(self: *Integer, writer: anytype) !void {
+        try writer.print("{}", .{self.value});
     }
 };
 
 pub const Boolean = struct {
     value: bool,
 
-    pub fn inspect(self: *const Boolean, writer: anytype) !void {
+    pub fn inspect(self: *Boolean, writer: anytype) !void {
         try writer.print("{}", .{self.value});
     }
 };

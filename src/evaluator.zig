@@ -6,6 +6,8 @@ const Ast = @import("ast.zig");
 
 const Object = @import("object.zig");
 
+const NULL = Object.Object{ .Null = .{} };
+
 pub fn eval(node: Ast.Node) Object.Object {
     switch (node) {
         .Statement => |statement| {
@@ -36,12 +38,15 @@ pub fn eval(node: Ast.Node) Object.Object {
                     var right_operand = eval(.{ .Expression = infix_expr.right_operand });
                     return evalInfixExpression(infix_expr.token, left_operand, right_operand);
                 },
+                .IfExpression => |if_expr| {
+                    return evalIfExpression(if_expr);
+                },
                 else => unreachable,
             }
         },
     }
 
-    return .{ .Null = .{} };
+    return NULL;
 }
 
 fn evalStatements(statements: []*Ast.Statement) Object.Object {
@@ -62,6 +67,21 @@ fn evalPrefixExpression(operator: Lexer.Token, operand: Object.Object) Object.Ob
     }
 }
 
+fn evalBangOperator(operand: Object.Object) Object.Object {
+    switch (operand) {
+        .Boolean => |boolean| return .{ .Boolean = .{ .value = !boolean.value } },
+        .Integer => |integer| return .{ .Boolean = .{ .value = integer.value == 0 } },
+        .Null => return NULL,
+    }
+}
+
+fn evalNegativeOperator(operand: Object.Object) Object.Object {
+    switch (operand) {
+        .Integer => return .{ .Integer = .{ .value = -operand.Integer.value } },
+        inline else => return NULL,
+    }
+}
+
 fn evalInfixExpression(operator: Lexer.Token, left_operand: Object.Object, right_operand: Object.Object) Object.Object {
     if (left_operand == .Integer and right_operand == .Integer) {
         return evalIntegerInfixExpression(operator, left_operand, right_operand);
@@ -70,7 +90,7 @@ fn evalInfixExpression(operator: Lexer.Token, left_operand: Object.Object, right
         return evalBooleanInfixExpression(operator, left_operand, right_operand);
     }
 
-    return .{ .Null = .{} };
+    return NULL;
 }
 
 fn evalIntegerInfixExpression(operator: Lexer.Token, left_operand: Object.Object, right_operand: Object.Object) Object.Object {
@@ -95,18 +115,23 @@ fn evalBooleanInfixExpression(operator: Lexer.Token, left_operand: Object.Object
     }
 }
 
-fn evalBangOperator(operand: Object.Object) Object.Object {
-    switch (operand) {
-        .Boolean => |boolean| return .{ .Boolean = .{ .value = !boolean.value } },
-        .Integer => |integer| return .{ .Boolean = .{ .value = integer.value == 0 } },
-        .Null => return .{ .Null = .{} },
+fn evalIfExpression(if_expr: *Ast.IfExpression) Object.Object {
+    var condition = eval(.{ .Expression = if_expr.condition });
+
+    if (isTruthy(condition)) {
+        return evalStatements(if_expr.consequence.statements.items);
+    } else if (if_expr.alternative) |alternative| {
+        return evalStatements(alternative.statements.items);
     }
+
+    return NULL;
 }
 
-fn evalNegativeOperator(operand: Object.Object) Object.Object {
-    switch (operand) {
-        .Integer => return .{ .Integer = .{ .value = -operand.Integer.value } },
-        inline else => return .{ .Null = .{} },
+fn isTruthy(object: Object.Object) bool {
+    switch (object) {
+        .Boolean => |boolean| return boolean.value,
+        .Integer => |integer| return integer.value != 0,
+        inline else => return false,
     }
 }
 
@@ -264,6 +289,55 @@ test "Eval Bang Operator" {
 
         switch (object) {
             .Boolean => |boolean| try std.testing.expectEqual(test_input.expected, boolean.value),
+            else => unreachable,
+        }
+    }
+}
+
+test "Eval If Else Expression" {
+    const Input = struct { input: []const u8, expected: ?i64 };
+    const input = [_]Input{
+        .{ .input = "if (true) { 10 }", .expected = 10 },
+        .{ .input = "if (false) { 10 }", .expected = null },
+        .{ .input = "if (1) { 10 }", .expected = 10 },
+        .{ .input = "if (1 < 2) { 10 }", .expected = 10 },
+        .{ .input = "if (1 > 2) { 10 }", .expected = null },
+        .{ .input = "if (1 > 2) { 10 } else { 20 }", .expected = 20 },
+        .{ .input = "if (1 < 2) { 10 } else { 20 }", .expected = 10 },
+    };
+
+    for (input) |test_input| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+
+        var allocator = arena.allocator();
+
+        var lexer = Lexer.init(test_input.input);
+
+        var parser = try Parser.init(&lexer, allocator);
+        defer parser.deinit();
+
+        var program = try parser.parseProgram(allocator);
+        defer program.deinit();
+
+        var statement = Ast.Statement{ .Program = program };
+        var node = Ast.Node{ .Statement = &statement };
+
+        if (parser.errors.items.len > 0) {
+            std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
+            for (parser.errors.items) |message| {
+                std.debug.print("- {s}\n", .{message});
+            }
+            try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
+        }
+
+        var object = eval(node);
+
+        switch (object) {
+            .Integer => |integer| try std.testing.expectEqual(test_input.expected, integer.value),
+            .Null => {
+                try std.testing.expectEqual(@as(@TypeOf(test_input.expected), null), test_input.expected);
+            },
             else => unreachable,
         }
     }

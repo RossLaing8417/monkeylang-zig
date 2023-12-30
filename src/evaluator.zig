@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const Evaluator = @This();
+
 const Parser = @import("parser.zig");
 const Lexer = @import("lexer.zig");
 const Ast = @import("ast.zig");
@@ -8,18 +10,24 @@ const Object = @import("object.zig");
 
 const NULL = Object.Object{ .Literal = .{ .Null = .{} } };
 
-pub fn eval(node: Ast.Node) Object.Object {
+arena: std.mem.Allocator,
+
+pub fn init(arena: std.mem.Allocator) Evaluator {
+    return .{ .arena = arena };
+}
+
+pub fn eval(self: *Evaluator, node: Ast.Node) Object.Object {
     switch (node) {
         .Statement => |statement| {
             switch (statement.*) {
                 .Program => |program| {
-                    return evalProgram(program);
+                    return self.evalProgram(program);
                 },
                 .ExpressionStatement => |expr_statement| {
-                    return eval(.{ .Expression = expr_statement.expression });
+                    return self.eval(.{ .Expression = expr_statement.expression });
                 },
                 .ReturnStatement => |return_statement| {
-                    return .{ .ReturnValue = eval(.{ .Expression = return_statement.return_value }).Literal };
+                    return self.evalReturnStatement(return_statement);
                 },
                 else => unreachable,
             }
@@ -33,16 +41,16 @@ pub fn eval(node: Ast.Node) Object.Object {
                     return .{ .Literal = .{ .Boolean = .{ .value = boolean.value } } };
                 },
                 .PrefixExpression => |prefix_expr| {
-                    var operand = eval(.{ .Expression = prefix_expr.operand });
-                    return evalPrefixExpression(prefix_expr.token, operand);
+                    var operand = self.eval(.{ .Expression = prefix_expr.operand });
+                    return self.evalPrefixExpression(prefix_expr.token, operand);
                 },
                 .InfixExpression => |infix_expr| {
-                    var left_operand = eval(.{ .Expression = infix_expr.left_operand });
-                    var right_operand = eval(.{ .Expression = infix_expr.right_operand });
-                    return evalInfixExpression(infix_expr.token, left_operand, right_operand);
+                    var left_operand = self.eval(.{ .Expression = infix_expr.left_operand });
+                    var right_operand = self.eval(.{ .Expression = infix_expr.right_operand });
+                    return self.evalInfixExpression(infix_expr.token, left_operand, right_operand);
                 },
                 .IfExpression => |if_expr| {
-                    return evalIfExpression(if_expr);
+                    return self.evalIfExpression(if_expr);
                 },
                 else => unreachable,
             }
@@ -52,13 +60,13 @@ pub fn eval(node: Ast.Node) Object.Object {
     return NULL;
 }
 
-fn evalStatements(statements: []*Ast.Statement) Object.Object {
+fn evalStatements(self: *Evaluator, statements: []*Ast.Statement) Object.Object {
     var result = NULL;
 
     for (statements) |statement| {
-        result = eval(.{ .Statement = statement });
+        result = self.eval(.{ .Statement = statement });
 
-        if (result == .ReturnValue) {
+        if (result == .ReturnValue or result == .Error) {
             break;
         }
     }
@@ -66,8 +74,8 @@ fn evalStatements(statements: []*Ast.Statement) Object.Object {
     return result;
 }
 
-fn evalProgram(program: *Ast.Program) Object.Object {
-    var result = evalStatements(program.statements.items);
+fn evalProgram(self: *Evaluator, program: *Ast.Program) Object.Object {
+    var result = self.evalStatements(program.statements.items);
 
     if (result == .ReturnValue) {
         return .{ .Literal = result.ReturnValue };
@@ -76,48 +84,72 @@ fn evalProgram(program: *Ast.Program) Object.Object {
     return result;
 }
 
-fn evalPrefixExpression(operator: Lexer.Token, operand: Object.Object) Object.Object {
-    switch (operator.type) {
-        .Bang => return evalBangOperator(operand),
-        .Minus => return evalNegativeOperator(operand),
+fn evalReturnStatement(self: *Evaluator, return_statement: *Ast.ReturnStatement) Object.Object {
+    var result = self.eval(.{ .Expression = return_statement.return_value });
+    switch (result) {
+        .Literal => |literal| return .{ .ReturnValue = literal },
+        .Error => return result,
         else => unreachable,
     }
 }
 
-fn evalBangOperator(operand: Object.Object) Object.Object {
+fn evalPrefixExpression(self: *Evaluator, operator: Lexer.Token, operand: Object.Object) Object.Object {
+    switch (operator.type) {
+        .Bang => return self.evalBangOperator(operand),
+        .Minus => return self.evalNegativeOperator(operand),
+        else => return newError(self.arena, "Invalid prefix operator: {s}", .{@tagName(operator.type)}),
+    }
+}
+
+fn evalBangOperator(self: *Evaluator, operand: Object.Object) Object.Object {
     switch (operand) {
         .Literal => |literal| switch (literal) {
             .Integer => |integer| return .{ .Literal = .{ .Boolean = .{ .value = integer.value == 0 } } },
             .Boolean => |boolean| return .{ .Literal = .{ .Boolean = .{ .value = !boolean.value } } },
             .Null => return NULL,
         },
-        else => unreachable,
+        else => return newError(self.arena, "Invalid type. Expected 'Literal' but found '{s}'", .{@tagName(operand)}),
     }
 }
 
-fn evalNegativeOperator(operand: Object.Object) Object.Object {
+fn evalNegativeOperator(self: *Evaluator, operand: Object.Object) Object.Object {
     switch (operand) {
         .Literal => |literal| switch (literal) {
             .Integer => |integer| return .{ .Literal = .{ .Integer = .{ .value = -integer.value } } },
-            else => return NULL,
+            .Null => return NULL,
+            else => return newError(self.arena, "Operand type mismatch. Invalid operation: -'{s}'", .{@tagName(literal)}),
         },
-        else => unreachable,
+        else => return newError(self.arena, "Invalid type. Expected 'Literal' but found '{s}'", .{@tagName(operand)}),
     }
 }
 
-fn evalInfixExpression(operator: Lexer.Token, left_operand: Object.Object, right_operand: Object.Object) Object.Object {
-    if (left_operand == .Literal and left_operand.Literal == .Integer and right_operand == .Literal and right_operand.Literal == .Integer) {
-        return evalIntegerInfixExpression(operator, left_operand.Literal.Integer.value, right_operand.Literal.Integer.value);
+fn evalInfixExpression(self: *Evaluator, operator: Lexer.Token, left_operand: Object.Object, right_operand: Object.Object) Object.Object {
+    switch (left_operand) {
+        .Literal => |left_literal| switch (right_operand) {
+            .Literal => |right_literal| switch (left_literal) {
+                .Integer => |left_integer| {
+                    switch (right_literal) {
+                        .Integer => |right_integer| return self.evalIntegerInfixExpression(operator, left_integer.value, right_integer.value),
+                        .Null => return NULL,
+                        else => return newError(self.arena, "Right operand type mismatch. Invalid operation: 'Integer' {s} '{s}'", .{ operator.literal, @tagName(right_literal) }),
+                    }
+                },
+                .Boolean => |left_boolean| {
+                    switch (right_literal) {
+                        .Boolean => |right_boolean| return self.evalBooleanInfixExpression(operator, left_boolean.value, right_boolean.value),
+                        .Null => return NULL,
+                        else => return newError(self.arena, "Right operand type mismatch. Invalid operation: 'Boolean' {s} '{s}'", .{ operator.literal, @tagName(right_literal) }),
+                    }
+                },
+                .Null => return NULL,
+            },
+            else => return newError(self.arena, "Right operand type mismatch. Expected 'Literal' but found '{s}'", .{@tagName(right_operand)}),
+        },
+        else => return newError(self.arena, "Right operand type mismatch. Expected 'Literal' but found '{s}'", .{@tagName(left_operand)}),
     }
-
-    if (left_operand == .Literal and left_operand.Literal == .Boolean and right_operand == .Literal and right_operand.Literal == .Boolean) {
-        return evalBooleanInfixExpression(operator, left_operand.Literal.Boolean.value, right_operand.Literal.Boolean.value);
-    }
-
-    return NULL;
 }
 
-fn evalIntegerInfixExpression(operator: Lexer.Token, left_operand: i64, right_operand: i64) Object.Object {
+fn evalIntegerInfixExpression(self: *Evaluator, operator: Lexer.Token, left_operand: i64, right_operand: i64) Object.Object {
     switch (operator.type) {
         .Plus => return .{ .Literal = .{ .Integer = .{ .value = left_operand + right_operand } } },
         .Minus => return .{ .Literal = .{ .Integer = .{ .value = left_operand - right_operand } } },
@@ -127,25 +159,25 @@ fn evalIntegerInfixExpression(operator: Lexer.Token, left_operand: i64, right_op
         .NotEqual => return .{ .Literal = .{ .Boolean = .{ .value = left_operand != right_operand } } },
         .LessThan => return .{ .Literal = .{ .Boolean = .{ .value = left_operand < right_operand } } },
         .GreaterThan => return .{ .Literal = .{ .Boolean = .{ .value = left_operand > right_operand } } },
-        else => unreachable,
+        else => return newError(self.arena, "Invalid operation: 'Integer' {s} 'Integer'", .{operator.literal}),
     }
 }
 
-fn evalBooleanInfixExpression(operator: Lexer.Token, left_operand: bool, right_operand: bool) Object.Object {
+fn evalBooleanInfixExpression(self: *Evaluator, operator: Lexer.Token, left_operand: bool, right_operand: bool) Object.Object {
     switch (operator.type) {
         .Equal => return .{ .Literal = .{ .Boolean = .{ .value = left_operand == right_operand } } },
         .NotEqual => return .{ .Literal = .{ .Boolean = .{ .value = left_operand != right_operand } } },
-        else => unreachable,
+        else => return newError(self.arena, "Invalid operation: 'Boolean' {s} 'Boolean'", .{operator.literal}),
     }
 }
 
-fn evalIfExpression(if_expr: *Ast.IfExpression) Object.Object {
-    var condition = eval(.{ .Expression = if_expr.condition });
+fn evalIfExpression(self: *Evaluator, if_expr: *Ast.IfExpression) Object.Object {
+    var condition = self.eval(.{ .Expression = if_expr.condition });
 
     if (isTruthy(condition)) {
-        return evalStatements(if_expr.consequence.statements.items);
+        return self.evalStatements(if_expr.consequence.statements.items);
     } else if (if_expr.alternative) |alternative| {
-        return evalStatements(alternative.statements.items);
+        return self.evalStatements(alternative.statements.items);
     }
 
     return NULL;
@@ -160,6 +192,13 @@ fn isTruthy(object: Object.Object) bool {
         },
         else => return false,
     }
+}
+
+fn newError(arena: std.mem.Allocator, comptime message: []const u8, args: anytype) Object.Object {
+    var buffer = std.ArrayList(u8).initCapacity(arena, message.len) catch unreachable;
+    var writer = buffer.writer();
+    std.fmt.format(writer, message, args) catch unreachable;
+    return .{ .Error = .{ .value = buffer.toOwnedSlice() catch unreachable } };
 }
 
 test "Eval Integer Expression" {
@@ -207,7 +246,8 @@ test "Eval Integer Expression" {
             try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
         }
 
-        var object = eval(node);
+        var evaluator = Evaluator.init(allocator);
+        var object = evaluator.eval(node);
 
         switch (object) {
             .Literal => |literal| switch (literal) {
@@ -270,7 +310,8 @@ test "Eval Boolean Expression" {
             try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
         }
 
-        var object = eval(node);
+        var evaluator = Evaluator.init(allocator);
+        var object = evaluator.eval(node);
 
         switch (object) {
             .Literal => |literal| switch (literal) {
@@ -318,7 +359,8 @@ test "Eval Bang Operator" {
             try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
         }
 
-        var object = eval(node);
+        var evaluator = Evaluator.init(allocator);
+        var object = evaluator.eval(node);
 
         switch (object) {
             .Literal => |literal| switch (literal) {
@@ -367,7 +409,8 @@ test "Eval If Else Expression" {
             try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
         }
 
-        var object = eval(node);
+        var evaluator = Evaluator.init(allocator);
+        var object = evaluator.eval(node);
 
         switch (object) {
             .Literal => |literal| switch (literal) {
@@ -425,13 +468,70 @@ test "Eval Return Statement" {
             try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
         }
 
-        var object = eval(node);
+        var evaluator = Evaluator.init(allocator);
+        var object = evaluator.eval(node);
 
         switch (object) {
             .Literal => |literal| switch (literal) {
                 .Integer => |integer| try std.testing.expectEqual(test_input.expected, integer.value),
                 else => unreachable,
             },
+            else => unreachable,
+        }
+    }
+}
+
+test "Eval Error Handling" {
+    const Input = struct { input: []const u8, expected: []const u8 };
+    const input = [_]Input{
+        .{ .input = "5 + true;", .expected = "Right operand type mismatch. Invalid operation: 'Integer' + 'Boolean'" },
+        .{ .input = "5 + true; 5;", .expected = "Right operand type mismatch. Invalid operation: 'Integer' + 'Boolean'" },
+        .{ .input = "-true", .expected = "Operand type mismatch. Invalid operation: -'Boolean'" },
+        .{ .input = "true + false;", .expected = "Invalid operation: 'Boolean' + 'Boolean'" },
+        .{ .input = "5; true + false; 5", .expected = "Invalid operation: 'Boolean' + 'Boolean'" },
+        .{ .input = "if (10 > 1) { true + false; }", .expected = "Invalid operation: 'Boolean' + 'Boolean'" },
+        .{
+            .input =
+            \\if (10 > 1) {
+            \\    if (10 > 1) {
+            \\        return true + false;
+            \\    } return 1;
+            \\}
+            ,
+            .expected = "Invalid operation: 'Boolean' + 'Boolean'",
+        },
+    };
+
+    for (input) |test_input| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+
+        var allocator = arena.allocator();
+
+        var lexer = Lexer.init(test_input.input);
+
+        var parser = try Parser.init(&lexer, allocator);
+        defer parser.deinit();
+
+        var program = try parser.parseProgram(allocator);
+        defer program.deinit();
+
+        var statement = Ast.Statement{ .Program = program };
+        var node = Ast.Node{ .Statement = &statement };
+
+        if (parser.errors.items.len > 0) {
+            std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
+            for (parser.errors.items) |message| {
+                std.debug.print("- {s}\n", .{message});
+            }
+            try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
+        }
+
+        var evaluator = Evaluator.init(allocator);
+        var object = evaluator.eval(node);
+
+        switch (object) {
+            .Error => |err| try std.testing.expectEqualStrings(test_input.expected, err.value),
             else => unreachable,
         }
     }

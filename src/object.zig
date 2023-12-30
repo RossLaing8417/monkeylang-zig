@@ -1,6 +1,7 @@
 pub const Object = union(enum) {
     Literal: Literal,
     ReturnValue: Literal,
+    Error: Error,
 
     pub fn inspect(self: *const Object, writer: anytype) !void {
         switch (self.*) {
@@ -18,6 +19,14 @@ pub const Literal = union(enum) {
         switch (self.*) {
             inline else => |literal| try literal.inspect(writer),
         }
+    }
+};
+
+pub const Error = struct {
+    value: []const u8,
+
+    pub fn inspect(self: *Boolean, writer: anytype) !void {
+        try writer.print("ERROR {s}", .{self.value});
     }
 };
 

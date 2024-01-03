@@ -6,6 +6,8 @@ const Lexer = @import("lexer.zig");
 const Parser = @import("parser.zig");
 const Ast = @import("ast.zig");
 const Evaluator = @import("evaluator.zig");
+const Environment = @import("environment.zig");
+const Object = @import("object.zig");
 
 const PROMPT = ">> ";
 const MAX_LENGTH = 256;
@@ -28,17 +30,30 @@ pub fn loop(self: *Repl) !void {
 
     var buffer: [MAX_LENGTH]u8 = undefined;
 
+    var env_arena = std.heap.ArenaAllocator.init(self.allocator);
+    defer env_arena.deinit();
+
+    var environment = Environment.init(env_arena.allocator());
+    defer environment.deinit();
+
+    var what: ?*Object.Object = null;
+
     while (true) {
         _ = try out_stream.write(PROMPT);
 
         // TODO: Try streamUntilDelimiter
 
         while (try in_stream.readUntilDelimiterOrEof(&buffer, '\n')) |line| {
+            var arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer arena.deinit();
+
+            var allocator = arena.allocator();
+
             var lexer = Lexer.init(line);
-            var parser = try Parser.init(&lexer, self.allocator);
+            var parser = try Parser.init(&lexer, allocator);
             defer parser.deinit();
 
-            var program = try parser.parseProgram(self.allocator);
+            var program = try parser.parseProgram(allocator);
 
             if (parser.errors.items.len > 0) {
                 try out_stream.writeAll("Errors:");
@@ -50,8 +65,14 @@ pub fn loop(self: *Repl) !void {
                 break;
             }
 
+            var evaluator = Evaluator.init(allocator, &environment);
+
             var statement = Ast.Statement{ .Program = program };
-            var result = Evaluator.eval(.{ .Statement = &statement });
+            var result = evaluator.eval(.{ .Statement = &statement });
+
+            if (what == null) {
+                what = environment.get("a");
+            }
 
             try result.inspect(out_stream);
             try out_stream.writeAll("\n");

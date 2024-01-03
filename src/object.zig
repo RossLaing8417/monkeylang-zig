@@ -25,7 +25,7 @@ pub const Literal = union(enum) {
 pub const Error = struct {
     value: []const u8,
 
-    pub fn inspect(self: *Boolean, writer: anytype) !void {
+    pub fn inspect(self: *const Error, writer: anytype) !void {
         try writer.print("ERROR {s}", .{self.value});
     }
 };
@@ -33,7 +33,7 @@ pub const Error = struct {
 pub const Integer = struct {
     value: i64,
 
-    pub fn inspect(self: *Integer, writer: anytype) !void {
+    pub fn inspect(self: *const Integer, writer: anytype) !void {
         try writer.print("{}", .{self.value});
     }
 };
@@ -41,7 +41,7 @@ pub const Integer = struct {
 pub const Boolean = struct {
     value: bool,
 
-    pub fn inspect(self: *Boolean, writer: anytype) !void {
+    pub fn inspect(self: *const Boolean, writer: anytype) !void {
         try writer.print("{}", .{self.value});
     }
 };

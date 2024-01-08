@@ -14,7 +14,7 @@ const ParseError = std.mem.Allocator.Error || std.fmt.AllocPrintError || std.fmt
 lexer: *Lexer,
 current_token: Token = undefined,
 peek_token: Token = undefined,
-allocator: std.mem.Allocator,
+arena: std.mem.Allocator,
 errors: std.ArrayList([]const u8),
 
 const Precedence = enum(u8) {
@@ -33,7 +33,7 @@ pub fn init(lexer: *Lexer, allocator: std.mem.Allocator) ParseError!*Parser {
 
     parser.* = Parser{
         .lexer = lexer,
-        .allocator = allocator,
+        .arena = allocator,
         .errors = std.ArrayList([]const u8).init(allocator),
     };
 
@@ -45,7 +45,7 @@ pub fn init(lexer: *Lexer, allocator: std.mem.Allocator) ParseError!*Parser {
 
 pub fn deinit(self: *Parser) void {
     self.errors.deinit();
-    self.allocator.destroy(self);
+    self.arena.destroy(self);
 }
 
 pub fn parseProgram(self: *Parser, allocator: std.mem.Allocator) ParseError!*Program {
@@ -126,7 +126,7 @@ fn parseGroupedExpression(self: *Parser) ParseError!*Expression {
 }
 
 fn parseIfExpression(self: *Parser) ParseError!*Expression {
-    var if_expression = try self.allocator.create(Ast.IfExpression);
+    var if_expression = try self.arena.create(Ast.IfExpression);
     if_expression.* = Ast.IfExpression{
         .token = self.current_token,
         .condition = undefined,
@@ -152,21 +152,21 @@ fn parseIfExpression(self: *Parser) ParseError!*Expression {
         if_expression.alternative = try self.parseBlockStatement();
     }
 
-    var expression = try self.allocator.create(Expression);
+    var expression = try self.arena.create(Expression);
     expression.* = Expression{ .IfExpression = if_expression };
 
     return expression;
 }
 
 fn parseFunctionLiteral(self: *Parser) ParseError!*Expression {
-    var function_literal = try Ast.FunctionLiteral.init(self.current_token, self.allocator);
+    var function_literal = try Ast.FunctionLiteral.init(self.current_token, self.arena);
 
     _ = try self.expectPeek(.LeftParen);
 
     while (!self.peekTokenIs(.RightParen)) {
         self.nextToken();
 
-        var identifier = try self.allocator.create(Ast.Identifier);
+        var identifier = try self.arena.create(Ast.Identifier);
         identifier.* = Ast.Identifier{
             .token = self.current_token,
             .value = self.current_token.literal,
@@ -184,14 +184,14 @@ fn parseFunctionLiteral(self: *Parser) ParseError!*Expression {
 
     function_literal.body = try self.parseBlockStatement();
 
-    var expression = try self.allocator.create(Expression);
+    var expression = try self.arena.create(Expression);
     expression.* = Expression{ .FunctionLiteral = function_literal };
 
     return expression;
 }
 
 fn parseCallExpression(self: *Parser, function: *Expression) ParseError!*Expression {
-    var call_expression = try Ast.CallExpression.init(self.current_token, self.allocator);
+    var call_expression = try Ast.CallExpression.init(self.current_token, self.arena);
     call_expression.function = function;
 
     while (!self.peekTokenIs(.RightParen)) {
@@ -208,14 +208,14 @@ fn parseCallExpression(self: *Parser, function: *Expression) ParseError!*Express
 
     _ = try self.expectPeek(.RightParen);
 
-    var expression = try self.allocator.create(Expression);
+    var expression = try self.arena.create(Expression);
     expression.* = Expression{ .CallExpression = call_expression };
 
     return expression;
 }
 
 fn parseBlockStatement(self: *Parser) ParseError!*Ast.BlockStatement {
-    var block_statement = try Ast.BlockStatement.init(self.current_token, self.allocator);
+    var block_statement = try Ast.BlockStatement.init(self.current_token, self.arena);
 
     self.nextToken();
 
@@ -230,7 +230,7 @@ fn parseBlockStatement(self: *Parser) ParseError!*Ast.BlockStatement {
 }
 
 fn parseExpressionStatement(self: *Parser) ParseError!*Statement {
-    var expr_statement = try self.allocator.create(Ast.ExpressionStatement);
+    var expr_statement = try self.arena.create(Ast.ExpressionStatement);
     expr_statement.* = Ast.ExpressionStatement{
         .token = self.current_token,
         .expression = try self.parseExpression(.Lowest),
@@ -240,18 +240,18 @@ fn parseExpressionStatement(self: *Parser) ParseError!*Statement {
         self.nextToken();
     }
 
-    var statement = try self.allocator.create(Statement);
+    var statement = try self.arena.create(Statement);
     statement.* = Statement{ .ExpressionStatement = expr_statement };
 
     return statement;
 }
 
 fn parseLetStatement(self: *Parser) ParseError!?*Statement {
-    var let_statement = try self.allocator.create(Ast.LetStatement);
+    var let_statement = try self.arena.create(Ast.LetStatement);
     let_statement.* = Ast.LetStatement{ .token = self.current_token };
 
     if (!try self.expectPeek(.Identifier)) return null;
-    let_statement.name = try self.allocator.create(Ast.Identifier);
+    let_statement.name = try self.arena.create(Ast.Identifier);
     let_statement.name.* = Ast.Identifier{
         .token = self.current_token,
         .value = self.current_token.literal,
@@ -267,14 +267,14 @@ fn parseLetStatement(self: *Parser) ParseError!?*Statement {
         self.nextToken();
     }
 
-    var statement = try self.allocator.create(Statement);
+    var statement = try self.arena.create(Statement);
     statement.* = Statement{ .LetStatement = let_statement };
 
     return statement;
 }
 
 fn parseReturnStatement(self: *Parser) ParseError!*Statement {
-    var return_statement = try self.allocator.create(Ast.ReturnStatement);
+    var return_statement = try self.arena.create(Ast.ReturnStatement);
     return_statement.* = Ast.ReturnStatement{ .token = self.current_token };
 
     self.nextToken();
@@ -285,53 +285,53 @@ fn parseReturnStatement(self: *Parser) ParseError!*Statement {
         self.nextToken();
     }
 
-    var statement = try self.allocator.create(Statement);
+    var statement = try self.arena.create(Statement);
     statement.* = Statement{ .ReturnStatement = return_statement };
 
     return statement;
 }
 
 fn parseIdentifier(self: *Parser) ParseError!*Expression {
-    var identifier = try self.allocator.create(Ast.Identifier);
+    var identifier = try self.arena.create(Ast.Identifier);
     identifier.* = Ast.Identifier{
         .token = self.current_token,
         .value = self.current_token.literal,
     };
 
-    var expression = try self.allocator.create(Expression);
+    var expression = try self.arena.create(Expression);
     expression.* = Expression{ .Identifier = identifier };
 
     return expression;
 }
 
 fn parseInteger(self: *Parser) ParseError!*Expression {
-    var integer = try self.allocator.create(Ast.Integer);
+    var integer = try self.arena.create(Ast.Integer);
     integer.* = Ast.Integer{
         .token = self.current_token,
         .value = try std.fmt.parseInt(i64, self.current_token.literal, 10),
     };
 
-    var expression = try self.allocator.create(Expression);
+    var expression = try self.arena.create(Expression);
     expression.* = Expression{ .Integer = integer };
 
     return expression;
 }
 
 fn parseBoolean(self: *Parser) ParseError!*Expression {
-    var boolean = try self.allocator.create(Ast.Boolean);
+    var boolean = try self.arena.create(Ast.Boolean);
     boolean.* = Ast.Boolean{
         .token = self.current_token,
         .value = std.mem.eql(u8, self.current_token.literal, "true"),
     };
 
-    var expression = try self.allocator.create(Expression);
+    var expression = try self.arena.create(Expression);
     expression.* = Expression{ .Boolean = boolean };
 
     return expression;
 }
 
 fn parsePrefixExpression(self: *Parser) ParseError!*Expression {
-    var prefix_expression = try self.allocator.create(Ast.PrefixExpression);
+    var prefix_expression = try self.arena.create(Ast.PrefixExpression);
     prefix_expression.* = Ast.PrefixExpression{
         .token = self.current_token,
         .operator = self.current_token.literal,
@@ -341,14 +341,14 @@ fn parsePrefixExpression(self: *Parser) ParseError!*Expression {
 
     prefix_expression.operand = try self.parseExpression(.Prefix);
 
-    var expression = try self.allocator.create(Expression);
+    var expression = try self.arena.create(Expression);
     expression.* = Expression{ .PrefixExpression = prefix_expression };
 
     return expression;
 }
 
 fn parseInfixExpression(self: *Parser, left_operand: *Expression) ParseError!*Expression {
-    var infix_expression = try self.allocator.create(Ast.InfixExpression);
+    var infix_expression = try self.arena.create(Ast.InfixExpression);
     infix_expression.* = Ast.InfixExpression{
         .token = self.current_token,
         .operator = self.current_token.literal,
@@ -362,7 +362,7 @@ fn parseInfixExpression(self: *Parser, left_operand: *Expression) ParseError!*Ex
     // Decrement current_precedence param for right-associativity
     infix_expression.right_operand = try self.parseExpression(current_precedence);
 
-    var expression = try self.allocator.create(Expression);
+    var expression = try self.arena.create(Expression);
     expression.* = Expression{ .InfixExpression = infix_expression };
 
     return expression;
@@ -391,7 +391,7 @@ fn expectPeek(self: *Parser, token_type: Token.Type) ParseError!bool {
 }
 
 fn peekError(self: *Parser, token_type: Token.Type) ParseError!void {
-    try self.errors.append(try std.fmt.allocPrint(self.allocator, "Expected token '{s}' but got token '{s}' instead", .{
+    try self.errors.append(try std.fmt.allocPrint(self.arena, "Expected token '{s}' but got token '{s}' instead", .{
         @tagName(token_type),
         @tagName(self.peek_token.type),
     }));

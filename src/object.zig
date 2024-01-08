@@ -1,3 +1,6 @@
+const Ast = @import("ast.zig");
+const Environment = @import("environment.zig");
+
 pub const Object = union(enum) {
     Literal: Literal,
     ReturnValue: Literal,
@@ -13,6 +16,7 @@ pub const Object = union(enum) {
 pub const Literal = union(enum) {
     Integer: Integer,
     Boolean: Boolean,
+    Function: Function,
     Null: Null,
 
     pub fn inspect(self: *const Literal, writer: anytype) !void {
@@ -43,6 +47,28 @@ pub const Boolean = struct {
 
     pub fn inspect(self: *const Boolean, writer: anytype) !void {
         try writer.print("{}", .{self.value});
+    }
+};
+
+pub const Function = struct {
+    parameters: []*Ast.Identifier,
+    body: *Ast.BlockStatement,
+    environment: *Environment,
+
+    pub fn inspect(self: *const Function, writer: anytype) !void {
+        try writer.writeAll("fn (");
+
+        for (self.parameters, 0..) |identifier, i| {
+            if (i > 0) {
+                try writer.writeAll(", ");
+            }
+
+            identifier.write(writer);
+        }
+
+        try writer.writeAll(")");
+
+        self.body.write(writer);
     }
 };
 

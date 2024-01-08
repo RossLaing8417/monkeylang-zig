@@ -28,6 +28,8 @@ pub const Statement = union(enum) {
     ReturnStatement: *ReturnStatement,
     ExpressionStatement: *ExpressionStatement,
 
+    BlockStatement: *BlockStatement,
+
     pub fn tokenLiteral(self: *const Statement) []const u8 {
         switch (self.*) {
             inline else => |statement| return statement.tokenLiteral(),

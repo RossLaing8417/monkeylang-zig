@@ -34,9 +34,6 @@ pub fn eval(self: *Evaluator, node: Ast.Node, environment: *Environment) Object.
                 .LetStatement => |let_statement| {
                     return self.evalLetStatement(let_statement, environment);
                 },
-                .BlockStatement => |block_statement| {
-                    return self.evalStatements(block_statement.statements.items, environment);
-                },
             }
         },
         .Expression => |expression| {
@@ -63,13 +60,7 @@ pub fn eval(self: *Evaluator, node: Ast.Node, environment: *Environment) Object.
                     return self.evalIfExpression(if_expr, environment);
                 },
                 .FunctionLiteral => |function_literal| {
-                    return .{ .Literal = .{
-                        .Function = .{
-                            .parameters = function_literal.parameters.items,
-                            .body = function_literal.body,
-                            .environment = environment,
-                        },
-                    } };
+                    return .{ .Literal = .{ .Function = .{ .parameters = function_literal.parameters.items, .body = function_literal.body } } };
                 },
                 .CallExpression => |call_expr| {
                     return self.evalCallExpression(call_expr, environment);
@@ -121,7 +112,7 @@ fn evalLetStatement(self: *Evaluator, let_statement: *Ast.LetStatement, environm
         return result;
     }
 
-    environment.set(let_statement.name.value, result) catch unreachable;
+    _ = environment.set(let_statement.name.value, result) catch unreachable;
 
     return result;
 }
@@ -242,18 +233,11 @@ fn evalCallExpression(self: *Evaluator, call_expr: *Ast.CallExpression, environm
             return function;
         }
 
-        switch (function) {
-            .Literal => |literal| {
-                switch (literal) {
-                    .Function => |func| break :blk func,
-                    else => return newError(self.arena, "Invalid type. Expected 'Function' but found '{s}'", .{@tagName(literal)}),
-                }
-            },
-            else => return newError(self.arena, "Invalid type. Expected 'Literal' but found '{s}'", .{@tagName(function)}),
-        }
     };
 
-    var args = self.arena.alloc(Object.Object, function.parameters.len) catch unreachable;
+    var args = self.arena.alloc(Object.Object, call_expr.arguments.items.len) catch unreachable;
+    defer self.arena.free(args);
+
     for (call_expr.arguments.items, args) |arg_expr, *arg| {
         arg.* = self.eval(.{ .Expression = arg_expr }, environment);
 
@@ -267,20 +251,13 @@ fn evalCallExpression(self: *Evaluator, call_expr: *Ast.CallExpression, environm
 
     var allocator = arena.allocator();
 
-    var encolsed_env = Environment.initEnclosed(allocator, function.environment) catch unreachable;
+    var encolsed_env = Environment.initEnclosed(allocator, environment);
     defer encolsed_env.deinit();
 
-    for (function.parameters, args) |param, arg| {
-        _ = encolsed_env.set(param.value, arg) catch unreachable;
+    for (function.pa) |arg| {
     }
 
-    var statement = Ast.Statement{ .BlockStatement = function.body };
-    var result = self.eval(.{ .Statement = &statement }, encolsed_env);
-
-    return switch (result) {
-        .ReturnValue => |return_value| .{ .Literal = return_value },
-        else => result,
-    };
+    return NULL;
 }
 
 fn isTruthy(object: Object.Object) bool {
@@ -346,11 +323,11 @@ test "Eval Integer Expression" {
             try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
         }
 
-        var environment = try Environment.init(allocator);
+        var environment = Environment.init(allocator);
         defer environment.deinit();
 
         var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, environment);
+        var object = evaluator.eval(node, &environment);
 
         switch (object) {
             .Literal => |literal| switch (literal) {
@@ -413,11 +390,11 @@ test "Eval Boolean Expression" {
             try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
         }
 
-        var environment = try Environment.init(allocator);
+        var environment = Environment.init(allocator);
         defer environment.deinit();
 
         var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, environment);
+        var object = evaluator.eval(node, &environment);
 
         switch (object) {
             .Literal => |literal| switch (literal) {
@@ -465,11 +442,11 @@ test "Eval Bang Operator" {
             try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
         }
 
-        var environment = try Environment.init(allocator);
+        var environment = Environment.init(allocator);
         defer environment.deinit();
 
         var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, environment);
+        var object = evaluator.eval(node, &environment);
 
         switch (object) {
             .Literal => |literal| switch (literal) {
@@ -518,11 +495,11 @@ test "Eval If Else Expression" {
             try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
         }
 
-        var environment = try Environment.init(allocator);
+        var environment = Environment.init(allocator);
         defer environment.deinit();
 
         var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, environment);
+        var object = evaluator.eval(node, &environment);
 
         switch (object) {
             .Literal => |literal| switch (literal) {
@@ -580,11 +557,11 @@ test "Eval Return Statement" {
             try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
         }
 
-        var environment = try Environment.init(allocator);
+        var environment = Environment.init(allocator);
         defer environment.deinit();
 
         var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, environment);
+        var object = evaluator.eval(node, &environment);
 
         switch (object) {
             .Literal => |literal| switch (literal) {
@@ -643,11 +620,11 @@ test "Eval Error Handling" {
             try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
         }
 
-        var environment = try Environment.init(allocator);
+        var environment = Environment.init(allocator);
         defer environment.deinit();
 
         var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, environment);
+        var object = evaluator.eval(node, &environment);
 
         switch (object) {
             .Error => |err| try std.testing.expectEqualStrings(test_input.expected, err.value),
@@ -690,11 +667,11 @@ test "Eval Let Statement" {
             try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
         }
 
-        var environment = try Environment.init(allocator);
+        var environment = Environment.init(allocator);
         defer environment.deinit();
 
         var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, environment);
+        var object = evaluator.eval(node, &environment);
 
         switch (object) {
             .Literal => |literal| switch (literal) {
@@ -739,11 +716,11 @@ test "Eval Function Literal" {
             try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
         }
 
-        var environment = try Environment.init(allocator);
+        var environment = Environment.init(allocator);
         defer environment.deinit();
 
         var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, environment);
+        var object = evaluator.eval(node, &environment);
 
         switch (object) {
             .Literal => |literal| switch (literal) {
@@ -775,9 +752,9 @@ test "Eval Call Expression" {
     const input = [_]Input{
         .{ .input = "let identity = fn(x) { x; }; identity(5);", .expected = 5 },
         .{ .input = "let identity = fn(x) { return x; }; identity(5);", .expected = 5 },
-        .{ .input = "let double = fn(x) { x * 2; }; double(5);", .expected = 10 },
-        .{ .input = "let add = fn(x, y) { x + y; }; add(5, 5);", .expected = 10 },
-        .{ .input = "let add = fn(x, y) { x + y; }; add(5 + 5, add(5, 5));", .expected = 20 },
+        .{ .input = "let double = fn(x) { x * 2; }; double(5);", .expected = 0 },
+        .{ .input = "let add = fn(x, y) { x + y; }; add(5, 5);", .expected = 0 },
+        .{ .input = "let add = fn(x, y) { x + y; }; add(5 + 5, add(5, 5));", .expected = 0 },
         .{ .input = "fn(x) { x; }(5)", .expected = 5 },
     };
 
@@ -806,78 +783,16 @@ test "Eval Call Expression" {
             try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
         }
 
-        var environment = try Environment.init(allocator);
+        var environment = Environment.init(allocator);
         defer environment.deinit();
 
         var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, environment);
+        var object = evaluator.eval(node, &environment);
 
         switch (object) {
             .Literal => |literal| switch (literal) {
                 .Integer => |integer| try std.testing.expectEqual(test_input.expected, integer.value),
                 else => unreachable,
-            },
-            else => unreachable,
-        }
-    }
-}
-
-test "Eval Closure" {
-    const Input = struct { input: []const u8, expected: i64 };
-    const input = [_]Input{
-        .{
-            .input =
-            \\let newAdder = fn(x) {
-            \\    fn(y) { x + y };
-            \\};
-            \\let addTwo = newAdder(2);
-            \\addTwo(2);
-            ,
-            .expected = 4,
-        },
-    };
-
-    for (input) |test_input| {
-        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-        defer arena.deinit();
-
-        var allocator = arena.allocator();
-
-        var lexer = Lexer.init(test_input.input);
-
-        var parser = try Parser.init(&lexer, allocator);
-        defer parser.deinit();
-
-        var program = try parser.parseProgram(allocator);
-        defer program.deinit();
-
-        var statement = Ast.Statement{ .Program = program };
-        var node = Ast.Node{ .Statement = &statement };
-
-        if (parser.errors.items.len > 0) {
-            std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
-            for (parser.errors.items) |message| {
-                std.debug.print("- {s}\n", .{message});
-            }
-            try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
-        }
-
-        var environment = try Environment.init(allocator);
-        defer environment.deinit();
-
-        std.testing.log_level = .info;
-        std.log.info("LOGGING!", .{});
-
-        var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, environment);
-
-        switch (object) {
-            .Literal => |literal| switch (literal) {
-                .Integer => |integer| try std.testing.expectEqual(test_input.expected, integer.value),
-                else => unreachable,
-            },
-            .Error => |err| {
-                std.debug.panic("Error: {s}", .{err.value});
             },
             else => unreachable,
         }

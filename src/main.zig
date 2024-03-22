@@ -7,12 +7,7 @@ pub fn main() !void {
     const stdout = std.io.getStdOut();
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer {
-        const result = gpa.deinit();
-        if (result == .leak) {
-            std.debug.print("Leak!\n", .{});
-        }
-    }
+    defer std.debug.assert(gpa.deinit() == .ok);
 
     var repl = Repl.init(gpa.allocator(), stdin, stdout);
 
@@ -20,7 +15,5 @@ pub fn main() !void {
 }
 
 test {
-    _ = @import("lexer.zig");
-    _ = @import("parser.zig");
-    _ = @import("evaluator.zig");
+    std.testing.refAllDeclsRecursive(@This());
 }

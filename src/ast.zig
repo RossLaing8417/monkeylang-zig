@@ -1,12 +1,94 @@
 const std = @import("std");
 
+const Ast = @This();
+
+const Parser = @import("parser.zig");
 const Lexer = @import("lexer.zig");
 const Token = Lexer.Token;
-const WriteError = std.fs.File.WriteError;
+
+source: []const u8,
+tokens: []const Token,
+nodes: []const Node,
+
+pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
+    var tokens = std.ArrayList(Token).init(allocator);
+    defer tokens.deinit();
+
+    var lexer = Lexer.init(source);
+    while (true) {
+        const token = lexer.nextToken();
+        tokens.append(token);
+        if (token.type == .Eof) {
+            break;
+        }
+    }
+
+    var parser = Parser{
+        .allocator = allocator,
+        .tokens = tokens.items,
+        .tok_i = 0,
+        .nodes = std.ArrayList([]const Node).init(allocator),
+        .errors = std.ArrayList([]const u8).init(allocator),
+    };
+    defer parser.nodes.deinit();
+    defer parser.errors.deinit();
+
+    try parser.parseProgram();
+
+    return .{
+        .source = source,
+        .tokens = tokens.toOwnedSlice(),
+        .nodes = parser.nodes.toOwnedSlice(),
+        .errors = parser.errors.toOwnedSlice(),
+    };
+}
+
+pub fn deinit(self: *Ast, allocator: std.mem.Allocator) void {
+    for (self.tokens) |token| {
+        token.deinit(allocator);
+    }
+    for (self.nodes) |node| {
+        node.deinit(allocator);
+    }
+    for (self.errors) |err| {
+        err.deinit(allocator);
+    }
+    allocator.free(self.tokens);
+    allocator.free(self.nodes);
+    allocator.free(self.errors);
+}
 
 pub const Node = union(enum) {
-    Statement: *Statement,
-    Expression: *Expression,
+    // Statements
+    LetStatement: *LetStatement,
+    ReturnStatement: *ReturnStatement,
+    ExpressionStatement: *ExpressionStatement,
+
+    BlockStatement: *BlockStatement,
+
+    // Expressions
+    Identifier: *Identifier,
+    Integer: *Integer,
+    Boolean: *Boolean,
+
+    PrefixExpression: *PrefixExpression,
+    InfixExpression: *InfixExpression,
+    GroupedExpression: *GroupedExpression,
+    IfExpression: *IfExpression,
+    FunctionLiteral: *FunctionLiteral,
+    CallExpression: *CallExpression,
+
+    pub fn deinit(self: *const Node, allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            inline else => |node| node.deinit(allocator),
+        }
+    }
+
+    pub fn token(self: *const Node) Token {
+        switch (self.*) {
+            inline else => |node| return node.token,
+        }
+    }
 
     pub fn tokenLiteral(self: *const Node) []const u8 {
         switch (self.*) {
@@ -14,91 +96,9 @@ pub const Node = union(enum) {
         }
     }
 
-    pub fn write(self: *const Node, writer: anytype) void {
+    pub fn write(self: *const Node, writer: anytype) !void {
         switch (self.*) {
             inline else => |node| node.write(writer),
-        }
-    }
-};
-
-pub const Statement = union(enum) {
-    Program: *Program,
-
-    LetStatement: *LetStatement,
-    ReturnStatement: *ReturnStatement,
-    ExpressionStatement: *ExpressionStatement,
-
-    BlockStatement: *BlockStatement,
-
-    pub fn tokenLiteral(self: *const Statement) []const u8 {
-        switch (self.*) {
-            inline else => |statement| return statement.tokenLiteral(),
-        }
-    }
-
-    pub fn write(self: *const Statement, writer: anytype) void {
-        switch (self.*) {
-            inline else => |statement| statement.write(writer),
-        }
-    }
-};
-
-pub const Expression = union(enum) {
-    Identifier: *Identifier,
-    Integer: *Integer,
-    Boolean: *Boolean,
-
-    PrefixExpression: *PrefixExpression,
-    InfixExpression: *InfixExpression,
-    IfExpression: *IfExpression,
-    FunctionLiteral: *FunctionLiteral,
-    CallExpression: *CallExpression,
-
-    pub fn tokenLiteral(self: *const Expression, writer: anytype) void {
-        switch (self.*) {
-            inline else => |expression| return expression.tokenLiteral(writer),
-        }
-    }
-
-    pub fn write(self: *const Expression, writer: anytype) void {
-        switch (self.*) {
-            inline else => |expression| expression.write(writer),
-        }
-    }
-};
-
-pub const Program = struct {
-    statements: std.ArrayList(*Statement),
-    allocator: std.mem.Allocator,
-
-    pub fn init(allocator: std.mem.Allocator) !*Program {
-        var program = try allocator.create(Program);
-        errdefer program.deinit();
-
-        program.* = Program{
-            .statements = std.ArrayList(*Statement).init(allocator),
-            .allocator = allocator,
-        };
-
-        return program;
-    }
-
-    pub fn deinit(self: *Program) void {
-        self.statements.deinit();
-        self.allocator.destroy(self);
-    }
-
-    pub fn tokenLiteral(self: *const Program) []const u8 {
-        if (self.statements.items.len > 0) {
-            return self.statements.items[0].tokenLiteral();
-        }
-        return "";
-    }
-
-    pub fn write(self: *const Program, writer: anytype) void {
-        for (self.statements.items) |statement| {
-            statement.write(writer);
-            writer.writeAll("\n") catch unreachable;
         }
     }
 };
@@ -106,50 +106,66 @@ pub const Program = struct {
 pub const LetStatement = struct {
     token: Token,
     name: *Identifier = undefined,
-    value: *Expression = undefined,
+    value: Node = undefined,
+
+    pub fn deinit(self: *LetStatement, allocator: std.mem.Allocator) void {
+        self.name.deinit(allocator);
+        self.value.deinit(allocator);
+        allocator.destroy(self);
+    }
 
     pub fn tokenLiteral(self: *const LetStatement) []const u8 {
         return self.token.literal;
     }
 
-    pub fn write(self: *const LetStatement, writer: anytype) void {
-        writer.writeAll(self.tokenLiteral()) catch unreachable;
-        writer.writeAll(" ") catch unreachable;
-        self.name.write(writer);
-        writer.writeAll(" = ") catch unreachable;
-        self.value.write(writer);
-        writer.writeAll(";") catch unreachable;
+    pub fn write(self: *const LetStatement, writer: anytype) !void {
+        try writer.writeAll(self.tokenLiteral());
+        try writer.writeAll(" ");
+        try self.name.write(writer);
+        try writer.writeAll(" = ");
+        try self.value.write(writer);
+        try writer.writeAll(";");
     }
 };
 
 pub const ReturnStatement = struct {
     token: Token,
-    return_value: *Expression = undefined,
+    return_value: Node = undefined,
+
+    pub fn deinit(self: *ReturnStatement, allocator: std.mem.Allocator) void {
+        self.return_value.deinit(allocator);
+        allocator.destroy(self);
+    }
 
     pub fn tokenLiteral(self: *const ReturnStatement) []const u8 {
         return self.token.literal;
     }
 
-    pub fn write(self: *const ReturnStatement, writer: anytype) void {
-        writer.writeAll(self.tokenLiteral()) catch unreachable;
-        writer.writeAll(" ") catch unreachable;
-        writer.writeAll("<...>") catch unreachable;
-        self.return_value.write(writer);
-        writer.writeAll(";") catch unreachable;
+    pub fn write(self: *const ReturnStatement, writer: anytype) !void {
+        try writer.writeAll(self.tokenLiteral());
+        try writer.writeAll(" ");
+        try writer.writeAll("<...>");
+        try self.return_value.write(writer);
+        try writer.writeAll(";");
     }
 };
 
 pub const ExpressionStatement = struct {
     token: Token,
-    expression: *Expression = undefined,
+    expression: Node = undefined,
+
+    pub fn deinit(self: *ExpressionStatement, allocator: std.mem.Allocator) void {
+        self.expression.deinit(allocator);
+        allocator.destroy(self);
+    }
 
     pub fn tokenLiteral(self: *const ExpressionStatement) []const u8 {
         return self.token.literal;
     }
 
-    pub fn write(self: *const ExpressionStatement, writer: anytype) void {
-        self.expression.write(writer);
-        writer.writeAll(";") catch unreachable;
+    pub fn write(self: *const ExpressionStatement, writer: anytype) !void {
+        try self.expression.write(writer);
+        try writer.writeAll(";");
     }
 };
 
@@ -157,12 +173,14 @@ pub const Identifier = struct {
     token: Token,
     value: []const u8,
 
+    pub fn deinit(_: *Identifier, _: std.mem.Allocator) void {}
+
     pub fn tokenLiteral(self: *const Identifier) []const u8 {
         return self.token.literal;
     }
 
-    pub fn write(self: *const Identifier, writer: anytype) void {
-        writer.writeAll(self.value) catch unreachable;
+    pub fn write(self: *const Identifier, writer: anytype) !void {
+        try writer.writeAll(self.value);
     }
 };
 
@@ -170,12 +188,14 @@ pub const Integer = struct {
     token: Token,
     value: i64,
 
+    pub fn deinit(_: *Integer, _: std.mem.Allocator) void {}
+
     pub fn tokenLiteral(self: *const Integer) []const u8 {
         return self.token.literal;
     }
 
-    pub fn write(self: *const Integer, writer: anytype) void {
-        std.fmt.format(writer, "{d}", .{self.value}) catch unreachable;
+    pub fn write(self: *const Integer, writer: anytype) !void {
+        writer.printf("{d}", .{self.value});
     }
 };
 
@@ -183,189 +203,190 @@ pub const Boolean = struct {
     token: Token,
     value: bool,
 
+    pub fn deinit(_: *Boolean, _: std.mem.Allocator) void {}
+
     pub fn tokenLiteral(self: *const Boolean) []const u8 {
         return self.token.literal;
     }
 
-    pub fn write(self: *const Boolean, writer: anytype) void {
-        std.fmt.format(writer, "{}", .{self.value}) catch unreachable;
+    pub fn write(self: *const Boolean, writer: anytype) !void {
+        try writer.printf("{}", .{self.value});
     }
 };
 
 pub const PrefixExpression = struct {
     token: Token,
     operator: []const u8,
-    operand: *Expression = undefined,
+    operand: Node = undefined,
+
+    pub fn deinit(self: *PrefixExpression, allocator: std.mem.Allocator) void {
+        self.operand.deinit(allocator);
+        allocator.destroy(self);
+    }
 
     pub fn tokenLiteral(self: *const PrefixExpression) []const u8 {
         return self.token.literal;
     }
 
-    pub fn write(self: *const PrefixExpression, writer: anytype) void {
-        writer.writeAll("(") catch unreachable;
-        writer.writeAll(self.operator) catch unreachable;
-        self.operand.write(writer);
-        writer.writeAll(")") catch unreachable;
+    pub fn write(self: *const PrefixExpression, writer: anytype) !void {
+        try writer.writeAll(self.operator);
+        try self.operand.write(writer);
     }
 };
 
 pub const InfixExpression = struct {
     token: Token,
     operator: []const u8,
-    left_operand: *Expression = undefined,
-    right_operand: *Expression = undefined,
+    left_operand: Node = undefined,
+    right_operand: Node = undefined,
+
+    pub fn deinit(self: *InfixExpression, allocator: std.mem.Allocator) void {
+        self.left_operand.deinit(allocator);
+        self.right_operand.deinit(allocator);
+        allocator.destroy(self);
+    }
 
     pub fn tokenLiteral(self: *const InfixExpression) []const u8 {
         return self.token.literal;
     }
 
-    pub fn write(self: *const InfixExpression, writer: anytype) void {
-        writer.writeAll("(") catch unreachable;
-        self.left_operand.write(writer);
-        writer.writeAll(" ") catch unreachable;
-        writer.writeAll(self.operator) catch unreachable;
-        writer.writeAll(" ") catch unreachable;
-        self.right_operand.write(writer);
-        writer.writeAll(")") catch unreachable;
+    pub fn write(self: *const InfixExpression, writer: anytype) !void {
+        try self.left_operand.write(writer);
+        try writer.writeAll(" ");
+        try writer.writeAll(self.operator);
+        try writer.writeAll(" ");
+        try self.right_operand.write(writer);
+    }
+};
+
+pub const GroupedExpression = struct {
+    token: Token,
+    expression: Node,
+
+    pub fn deinit(self: *GroupedExpression, allocator: std.mem.Allocator) void {
+        self.expression.deinit(allocator);
+        allocator.destroy(self);
+    }
+
+    pub fn tokenLiteral(self: *const GroupedExpression) []const u8 {
+        self.token.literal;
+    }
+
+    pub fn write(self: *const GroupedExpression, writer: anytype) !void {
+        try writer.writeAll("(");
+        try self.expression.write(writer);
+        try writer.writeAll(")");
     }
 };
 
 pub const IfExpression = struct {
     token: Token,
-    condition: *Expression,
+    condition: Node,
     consequence: *BlockStatement,
     alternative: ?*BlockStatement,
+
+    pub fn deinit(self: *IfExpression, allocator: std.mem.Allocator) void {
+        self.condition.deinit(allocator);
+        self.consequence.deinit(allocator);
+        allocator.destroy(self);
+    }
 
     pub fn tokenLiteral(self: *const IfExpression) []const u8 {
         return self.token.literal;
     }
 
-    pub fn write(self: *const IfExpression, writer: anytype) void {
-        writer.writeAll("if ") catch unreachable;
-        self.condition.write(writer);
-        writer.writeAll(" ") catch unreachable;
-        self.consequence.write(writer);
+    pub fn write(self: *const IfExpression, writer: anytype) !void {
+        try writer.writeAll("if ");
+        try self.condition.write(writer);
+        try writer.writeAll(" ");
+        try self.consequence.write(writer);
         if (self.alternative) |alternative| {
-            writer.writeAll("else ") catch unreachable;
-            alternative.write(writer);
+            try writer.writeAll("else ");
+            try alternative.write(writer);
         }
     }
 };
 
 pub const BlockStatement = struct {
     token: Token,
-    statements: std.ArrayList(*Statement),
-    allocator: std.mem.Allocator,
+    statements: []const Node,
 
-    pub fn init(token: Token, allocator: std.mem.Allocator) !*BlockStatement {
-        var block_statement = try allocator.create(BlockStatement);
-        errdefer block_statement.deinit();
-
-        block_statement.* = BlockStatement{
-            .token = token,
-            .statements = std.ArrayList(*Statement).init(allocator),
-            .allocator = allocator,
-        };
-
-        return block_statement;
-    }
-
-    pub fn deinit(self: *BlockStatement) void {
-        self.statements.deinit();
-        self.allocator.destroy(self);
+    pub fn deinit(self: *BlockStatement, allocator: std.mem.Allocator) void {
+        for (self.statements) |*statement| {
+            statement.deinit(allocator);
+        }
+        allocator.free(self.statements);
+        allocator.destroy(self);
     }
 
     pub fn tokenLiteral(self: *const BlockStatement) []const u8 {
         return self.token.literal;
     }
 
-    pub fn write(self: *const BlockStatement, writer: anytype) void {
-        writer.writeAll("{\n") catch unreachable;
+    pub fn write(self: *const BlockStatement, writer: anytype) !void {
+        try writer.writeAll("{\n");
         for (self.statements.items) |statement| {
-            statement.write(writer);
-            writer.writeAll("\n") catch unreachable;
+            try statement.write(writer);
+            try writer.writeAll("\n");
         }
-        writer.writeAll("}\n") catch unreachable;
+        try writer.writeAll("}\n");
     }
 };
 
 pub const FunctionLiteral = struct {
     token: Token,
-    parameters: std.ArrayList(*Identifier),
+    parameters: []const *Identifier,
     body: *BlockStatement,
-    allocator: std.mem.Allocator,
 
-    pub fn init(token: Token, allocator: std.mem.Allocator) !*FunctionLiteral {
-        var function_literal = try allocator.create(FunctionLiteral);
-        errdefer function_literal.deinit();
-
-        function_literal.* = FunctionLiteral{
-            .token = token,
-            .parameters = std.ArrayList(*Identifier).init(allocator),
-            .body = undefined,
-            .allocator = allocator,
-        };
-
-        return function_literal;
-    }
-
-    pub fn deinit(self: *FunctionLiteral) void {
-        self.parameters.deinit();
-        self.allocator.destroy(self);
+    pub fn deinit(self: *FunctionLiteral, allocator: std.mem.Allocator) void {
+        for (self.parameters) |*parameter| {
+            parameter.deinit(allocator);
+        }
+        allocator.free(self.parameters);
+        self.body.deinit(allocator);
+        allocator.destroy(self);
     }
 
     pub fn tokenLiteral(self: *const FunctionLiteral) []const u8 {
         return self.token.literal;
     }
 
-    pub fn write(self: *const FunctionLiteral, writer: anytype) void {
-        writer.writeAll("fn ") catch unreachable;
-        writer.writeAll("(") catch unreachable;
+    pub fn write(self: *const FunctionLiteral, writer: anytype) !void {
+        try writer.printf("{s} ", .{self.tokenLiteral()});
+        try writer.writeAll("(");
         for (self.parameters.items, 0..) |parameter, i| {
-            if (i > 0) writer.writeAll(", ") catch unreachable;
-            parameter.write(writer);
+            if (i > 0) try writer.writeAll(", ");
+            try parameter.write(writer);
         }
-        writer.writeAll(") ") catch unreachable;
-        self.body.write(writer);
+        try writer.writeAll(") ");
+        try self.body.write(writer);
     }
 };
 
 pub const CallExpression = struct {
     token: Token,
-    function: *Expression,
-    arguments: std.ArrayList(*Expression),
-    allocator: std.mem.Allocator,
+    function: Node,
+    arguments: []const Node,
 
-    pub fn init(token: Token, allocator: std.mem.Allocator) !*CallExpression {
-        var call_expression = try allocator.create(CallExpression);
-        errdefer call_expression.deinit();
-
-        call_expression.* = CallExpression{
-            .token = token,
-            .function = undefined,
-            .arguments = std.ArrayList(*Expression).init(allocator),
-            .allocator = allocator,
-        };
-
-        return call_expression;
-    }
-
-    pub fn deinit(self: *CallExpression) void {
-        self.arguments.deinit();
-        self.allocator.destroy(self);
+    pub fn deinit(self: *CallExpression, allocator: std.mem.Allocator) void {
+        for (self.arguments) |argument| {
+            argument.deinit(allocator);
+        }
+        allocator.free(self.arguments);
+        allocator.destroy(self);
     }
 
     pub fn tokenLiteral(self: *const CallExpression) []const u8 {
         return self.token.literal;
     }
 
-    pub fn write(self: *const CallExpression, writer: anytype) void {
-        self.function.write(writer);
-        writer.writeAll("(") catch unreachable;
+    pub fn write(self: *const CallExpression, writer: anytype) !void {
+        try self.function.write(writer);
+        try writer.writeAll("(");
         for (self.arguments.items, 0..) |argument, i| {
-            if (i > 0) writer.writeAll(", ") catch unreachable;
-            argument.write(writer);
+            if (i > 0) try writer.writeAll(", ");
+            try argument.write(writer);
         }
-        writer.writeAll(")") catch unreachable;
+        try writer.writeAll(")");
     }
 };

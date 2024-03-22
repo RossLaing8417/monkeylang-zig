@@ -12,7 +12,7 @@ const Error = std.mem.Allocator.Error || std.fmt.AllocPrintError || std.fmt.Pars
 allocator: std.mem.Allocator,
 tokens: []const Token,
 tok_i: usize,
-nodes: std.ArrayList([]const Node),
+nodes: std.ArrayList(Node),
 errors: std.ArrayList([]const u8),
 
 const Precedence = enum(u8) {
@@ -25,25 +25,26 @@ const Precedence = enum(u8) {
     Call,
 };
 
-pub fn parseProgram(self: *Parser) !void {
-    while (self.tokes[self.tok_i].type != .Eof) {
-        if (try self.parseStatement()) |node| {
-            try self.append(node);
-        }
+pub fn parseProgram(self: *Parser) Error!void {
+    while (!self.currentTokenIs(.Eof)) {
+        try self.nodes.append(try self.parseStatement());
     }
 }
 
-fn parseStatement(self: *Parser) !Node {
+fn parseStatement(self: *Parser) Error!Node {
     const node = switch (self.tokens[self.tok_i].type) {
         .Let => try self.parseLetStatement(),
         .Return => try self.parseReturnStatement(),
+        .If => try self.parseIfExpression(),
         else => try self.parseExpressionStatement(),
     };
     _ = self.consumeToken(.SemiColon);
     return node;
 }
 
-fn parseExpression(self: *Parser, precedence: Precedence) !Node {
+fn parseExpression(self: *Parser, precedence: Precedence) Error!Node {
+    // std.debug.print("TOKEN EXPR: {s} ({s})\n", .{ @tagName(self.tokens[self.tok_i].type), self.tokens[self.tok_i].literal });
+
     var left_operand = switch (self.tokens[self.tok_i].type) {
         .Identifier => try self.parseIdentifier(),
         .Integer => try self.parseInteger(),
@@ -59,24 +60,29 @@ fn parseExpression(self: *Parser, precedence: Precedence) !Node {
 
     while (true) {
         const token = self.tokens[self.tok_i];
-        if (self.currentTokenIs(.SemiColon) or @intFromEnum(precedence) >= @intFromEnum(self.tokenPrecedence(token))) {
+
+        // std.debug.print("TOKEN PREC: {s} -> {s} vs {s}\n", .{ @tagName(token.type), @tagName(precedence), @tagName(tokenPrecedence(token)) });
+
+        if (self.currentTokenIs(.SemiColon) or @intFromEnum(precedence) >= @intFromEnum(tokenPrecedence(token))) {
+            // std.debug.print("GTFO!\n", .{});
             break;
         }
 
         // I don't know what the right pattern is here if there is any...?
         // #skillissue
-        _ = switch (self.tokens[self.tok_i + 1].type) {
-            .Plus => true,
-            .Minus => true,
-            .Asterisk => true,
-            .Slash => true,
-            .Equal => true,
-            .NotEqual => true,
-            .LessThan => true,
-            .GreaterThan => true,
-            .LeftParen => true,
+        switch (self.tokens[self.tok_i].type) {
+            .Plus,
+            .Minus,
+            .Asterisk,
+            .Slash,
+            .Equal,
+            .NotEqual,
+            .LessThan,
+            .GreaterThan,
+            .LeftParen,
+            => {},
             else => return left_operand,
-        };
+        }
 
         left_operand = switch (self.tokens[self.tok_i].type) {
             .LeftParen => try self.parseCallExpression(left_operand),
@@ -87,12 +93,12 @@ fn parseExpression(self: *Parser, precedence: Precedence) !Node {
     return left_operand;
 }
 
-fn parseGroupedExpression(self: *Parser) !Node {
+fn parseGroupedExpression(self: *Parser) Error!Node {
     var grouped_expression = try self.allocator.create(Ast.GroupedExpression);
 
     grouped_expression.* = .{
         .token = try self.expectToken(.LeftParen),
-        .expression = self.parseExpression(.Lowest),
+        .expression = try self.parseExpression(.Lowest),
     };
 
     _ = try self.expectToken(.RightParen);
@@ -100,10 +106,10 @@ fn parseGroupedExpression(self: *Parser) !Node {
     return .{ .GroupedExpression = grouped_expression };
 }
 
-fn parseIfExpression(self: *Parser) !Node {
+fn parseIfExpression(self: *Parser) Error!Node {
     var if_expression = try self.allocator.create(Ast.IfExpression);
     if_expression.* = Ast.IfExpression{
-        .token = try self.expectToken(.IfExpression),
+        .token = try self.expectToken(.If),
         .condition = undefined,
         .consequence = undefined,
         .alternative = null,
@@ -124,15 +130,15 @@ fn parseIfExpression(self: *Parser) !Node {
     return .{ .IfExpression = if_expression };
 }
 
-fn parseFunctionLiteral(self: *Parser) !Node {
-    var parameters = std.ArrayList(*Ast.Identifier).init(self.allocator);
+fn parseFunctionLiteral(self: *Parser) Error!Node {
+    var parameters = std.ArrayList(Node).init(self.allocator);
     defer parameters.deinit();
 
-    const token = try self.expectToken(.FunctionLiteral);
+    const token = try self.expectToken(.Function);
     _ = try self.expectToken(.LeftParen);
 
     while (!self.currentTokenIs(.RightParen)) {
-        const tok = self.expectToken(.Identifier);
+        const tok = try self.expectToken(.Identifier);
 
         var identifier = try self.allocator.create(Ast.Identifier);
         identifier.* = Ast.Identifier{
@@ -140,7 +146,7 @@ fn parseFunctionLiteral(self: *Parser) !Node {
             .value = tok.literal,
         };
 
-        try parameters.append(identifier);
+        try parameters.append(.{ .Identifier = identifier });
 
         _ = self.consumeToken(.Comma);
     }
@@ -151,21 +157,21 @@ fn parseFunctionLiteral(self: *Parser) !Node {
     function_literal.* = .{
         .token = token,
         .body = try self.parseBlockStatement(),
-        .parameters = parameters.toOwnedSlice(),
+        .parameters = try parameters.toOwnedSlice(),
     };
 
     return .{ .FunctionLiteral = function_literal };
 }
 
-fn parseCallExpression(self: *Parser, function: Node) !Node {
+fn parseCallExpression(self: *Parser, function: Node) Error!Node {
     var arguments = std.ArrayList(Node).init(self.allocator);
     defer arguments.deinit();
 
-    const token = self.expectToken(.LeftParen);
+    const token = try self.expectToken(.LeftParen);
 
     while (!self.currentTokenIs(.RightParen)) {
         try arguments.append(try self.parseExpression(.Lowest));
-        _ = self.currentTokenIs(.Comma);
+        _ = self.consumeToken(.Comma);
     }
 
     _ = try self.expectToken(.RightParen);
@@ -180,18 +186,17 @@ fn parseCallExpression(self: *Parser, function: Node) !Node {
     return .{ .CallExpression = call_expression };
 }
 
-fn parseBlockStatement(self: *Parser) !*Ast.BlockStatement {
+fn parseBlockStatement(self: *Parser) Error!Node {
     var statements = std.ArrayList(Node).init(self.allocator);
     defer statements.deinit();
 
-    const token = self.expectToken(.LeftBrace);
+    const token = try self.expectToken(.LeftBrace);
 
     while (!self.currentTokenIs(.RightBrace) and !self.currentTokenIs(.Eof)) {
-        if (try self.parseStatement()) |statement| {
-            try statements.append(statement);
-        }
-        _ = self.nextToken();
+        try statements.append(try self.parseStatement());
     }
+
+    _ = try self.expectToken(.RightBrace);
 
     var block_statement = try self.allocator.create(Ast.BlockStatement);
     block_statement.* = .{
@@ -199,10 +204,34 @@ fn parseBlockStatement(self: *Parser) !*Ast.BlockStatement {
         .statements = try statements.toOwnedSlice(),
     };
 
-    return block_statement;
+    return .{ .BlockStatement = block_statement };
 }
 
-fn parseExpressionStatement(self: *Parser) !Node {
+fn parseLetStatement(self: *Parser) Error!Node {
+    var let_statement = try self.allocator.create(Ast.LetStatement);
+    let_statement.* = Ast.LetStatement{
+        .token = self.nextToken(),
+        .name = try self.parseIdentifier(),
+    };
+
+    _ = try self.expectToken(.Assign);
+
+    let_statement.value = try self.parseExpression(.Lowest);
+
+    return .{ .LetStatement = let_statement };
+}
+
+fn parseReturnStatement(self: *Parser) Error!Node {
+    var return_statement = try self.allocator.create(Ast.ReturnStatement);
+    return_statement.* = .{
+        .token = try self.expectToken(.Return),
+        .return_value = try self.parseExpression(.Lowest),
+    };
+
+    return .{ .ReturnStatement = return_statement };
+}
+
+fn parseExpressionStatement(self: *Parser) Error!Node {
     var expr_statement = try self.allocator.create(Ast.ExpressionStatement);
     expr_statement.* = Ast.ExpressionStatement{
         .token = self.tokens[self.tok_i],
@@ -212,83 +241,57 @@ fn parseExpressionStatement(self: *Parser) !Node {
     return .{ .ExpressionStatement = expr_statement };
 }
 
-fn parseLetStatement(self: *Parser) !Node {
-    var let_statement = try self.allocator.create(Ast.LetStatement);
-    let_statement.* = Ast.LetStatement{
-        .token = self.nextToken(),
-    };
+fn parseIdentifier(self: *Parser) Error!Node {
+    const token = try self.expectToken(.Identifier);
 
-    const token = self.nextToken();
-
-    let_statement.name = try self.allocator.create(Ast.Identifier);
-    let_statement.name.* = Ast.Identifier{
-        .token = token,
-        .value = token.literal,
-    };
-
-    _ = self.expectToken(.Equals);
-
-    let_statement.value = try self.parseExpression(.Lowest);
-
-    return .{ .LetStatement = let_statement };
-}
-
-fn parseReturnStatement(self: *Parser) !Node {
-    var return_statement = try self.allocator.create(Ast.ReturnStatement);
-    return_statement.* = Ast.ReturnStatement{ .token = self.current_token };
-
-    self.nextToken();
-
-    return_statement.return_value = try self.parseExpression(.Lowest);
-
-    return .{ .ReturnStatement = return_statement };
-}
-
-fn parseIdentifier(self: *Parser) !Node {
     var identifier = try self.allocator.create(Ast.Identifier);
     identifier.* = Ast.Identifier{
-        .token = self.current_token,
-        .value = self.current_token.literal,
+        .token = token,
+        .value = token.literal,
     };
 
     return .{ .Identifier = identifier };
 }
 
-fn parseInteger(self: *Parser) !Node {
+fn parseInteger(self: *Parser) Error!Node {
+    const token = try self.expectToken(.Integer);
+
     var integer = try self.allocator.create(Ast.Integer);
     integer.* = Ast.Integer{
-        .token = self.current_token,
-        .value = try std.fmt.parseInt(i64, self.current_token.literal, 10),
+        .token = token,
+        .value = try std.fmt.parseInt(i64, token.literal, 10),
     };
 
     return .{ .Integer = integer };
 }
 
-fn parseBoolean(self: *Parser) !Node {
+fn parseBoolean(self: *Parser) Error!Node {
+    const token = self.consumeToken(.True) orelse
+        try self.expectToken(.False);
+
     var boolean = try self.allocator.create(Ast.Boolean);
     boolean.* = Ast.Boolean{
-        .token = self.current_token,
-        .value = std.mem.eql(u8, self.current_token.literal, "true"),
+        .token = token,
+        .value = (token.type == .True),
     };
 
     return .{ .Boolean = boolean };
 }
 
-fn parsePrefixExpression(self: *Parser) !Node {
+fn parsePrefixExpression(self: *Parser) Error!Node {
+    const token = self.nextToken();
+
     var prefix_expression = try self.allocator.create(Ast.PrefixExpression);
     prefix_expression.* = Ast.PrefixExpression{
-        .token = self.current_token,
-        .operator = self.current_token.literal,
+        .token = token,
+        .operator = token.literal,
+        .operand = try self.parseExpression(.Prefix),
     };
-
-    self.nextToken();
-
-    prefix_expression.operand = try self.parseExpression(.Prefix);
 
     return .{ .PrefixExpression = prefix_expression };
 }
 
-fn parseInfixExpression(self: *Parser, left_operand: Node) !Node {
+fn parseInfixExpression(self: *Parser, left_operand: Node) Error!Node {
     const token = self.nextToken();
 
     var infix_expression = try self.allocator.create(Ast.InfixExpression);
@@ -296,10 +299,9 @@ fn parseInfixExpression(self: *Parser, left_operand: Node) !Node {
         .token = token,
         .operator = token.literal,
         .left_operand = left_operand,
+        // Decrement precedence param for right-associativity
+        .right_operand = try self.parseExpression(tokenPrecedence(token)),
     };
-
-    // Decrement precedence param for right-associativity
-    infix_expression.right_operand = try self.parseExpression(self.tokenPrecedence(token));
 
     return .{ .InfixExpression = infix_expression };
 }
@@ -311,7 +313,7 @@ fn nextToken(self: *Parser) Token {
     return token;
 }
 
-fn expectToken(self: *Parser, token_type: Token.Type) !Token {
+fn expectToken(self: *Parser, token_type: Token.Type) Error!Token {
     if (!self.currentTokenIs(token_type)) {
         try self.errors.append(try std.fmt.allocPrint(self.allocator, "Expected token '{s}' but got token '{s}' instead", .{
             @tagName(token_type),
@@ -338,8 +340,8 @@ fn currentTokenIs(self: *Parser, token_type: Token.Type) bool {
 //     return self.tokens[self.tok_i + 1].type == token_type;
 // }
 
-fn tokenPrecedence(token_type: Token.Type) Precedence {
-    return switch (token_type) {
+fn tokenPrecedence(token: Token) Precedence {
+    return switch (token.type) {
         .Equal => .Equals,
         .NotEqual => .Equals,
         .LessThan => .LessOrGreater,
@@ -360,26 +362,26 @@ test "Let Statement" {
         \\let baz = foo;
     ;
 
-    const expected = [_]Ast.Node{
+    const expected = [_]Node{
         .{
             .LetStatement = &.{
-                .token = .LetStatement,
-                .name = "foo",
-                .value = .{ .Integer = &.{ .token = .Integer, .value = 10 } },
+                .token = .{ .type = .Let, .literal = "let" },
+                .name = .{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "foo" }, .value = "foo" } },
+                .value = .{ .Integer = &.{ .token = .{ .type = .Integer, .literal = "10" }, .value = 10 } },
             },
         },
         .{
             .LetStatement = &.{
-                .token = .LetStatement,
-                .name = "bar",
-                .value = .{ .Boolean = &.{ .token = .Boolean, .value = true } },
+                .token = .{ .type = .Let, .literal = "let" },
+                .name = .{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "bar" }, .value = "bar" } },
+                .value = .{ .Boolean = &.{ .token = .{ .type = .True, .literal = "true" }, .value = true } },
             },
         },
         .{
             .LetStatement = &.{
-                .token = .LetStatement,
-                .name = "baz",
-                .value = .{ .Integer = &.{ .token = .Integer, .value = 5 } },
+                .token = .{ .type = .Let, .literal = "let" },
+                .name = .{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "baz" }, .value = "baz" } },
+                .value = .{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "foo" }, .value = "foo" } },
             },
         },
     };
@@ -388,24 +390,395 @@ test "Let Statement" {
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
 
-    // var buffer: [input.len * 2]u8 = undefined;
-    // var stream = std.io.fixedBufferStream(&buffer);
-    // program.write(stream.writer());
+    // var buffer = try ast.write(allocator);
+    // defer allocator.free(buffer);
     // std.debug.print("Let Statements:\n{s}\n", .{buffer});
 
     try expectEqualAst(&expected, &ast);
 }
 
+test "Return Statement" {
+    const input =
+        \\return 5;
+        \\return false;
+        \\return foobar;
+    ;
+
+    const expected = [_]Node{
+        .{
+            .ReturnStatement = &.{
+                .token = .{ .type = .Return, .literal = "return" },
+                .return_value = .{ .Integer = &.{ .token = .{ .type = .Integer, .literal = "5" }, .value = 5 } },
+            },
+        },
+        .{
+            .ReturnStatement = &.{
+                .token = .{ .type = .Return, .literal = "return" },
+                .return_value = .{ .Boolean = &.{ .token = .{ .type = .False, .literal = "false" }, .value = false } },
+            },
+        },
+        .{
+            .ReturnStatement = &.{
+                .token = .{ .type = .Return, .literal = "return" },
+                .return_value = .{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "foobar" }, .value = "foobar" } },
+            },
+        },
+    };
+
+    var allocator = std.testing.allocator;
+    var ast = try Ast.parse(allocator, input);
+    defer ast.deinit(allocator);
+
+    // var buffer = try ast.write(allocator);
+    // defer allocator.free(buffer);
+    // std.debug.print("Return Statements:\n{s}\n", .{buffer});
+
+    try expectEqualAst(&expected, &ast);
+}
+
+test "Prefix Operators" {
+    const input =
+        \\!5;
+        \\-15;
+    ;
+
+    const expected = [_]Node{
+        .{
+            .ExpressionStatement = &.{
+                .token = .{ .type = .Bang, .literal = "!" },
+                .expression = .{ .PrefixExpression = &.{
+                    .token = .{ .type = .Bang, .literal = "!" },
+                    .operator = "!",
+                    .operand = .{ .Integer = &.{ .token = .{ .type = .Integer, .literal = "5" }, .value = 5 } },
+                } },
+            },
+        },
+        .{
+            .ExpressionStatement = &.{
+                .token = .{ .type = .Minus, .literal = "-" },
+                .expression = .{ .PrefixExpression = &.{
+                    .token = .{ .type = .Minus, .literal = "-" },
+                    .operator = "-",
+                    .operand = .{ .Integer = &.{ .token = .{ .type = .Integer, .literal = "15" }, .value = 15 } },
+                } },
+            },
+        },
+    };
+
+    var allocator = std.testing.allocator;
+    var ast = try Ast.parse(allocator, input);
+    defer ast.deinit(allocator);
+
+    // var buffer = try ast.write(allocator);
+    // defer allocator.free(buffer);
+    // std.debug.print("Prefix Operators:\n{s}\n", .{buffer});
+
+    try expectEqualAst(&expected, &ast);
+}
+
+test "Infix Operators" {
+    const input =
+        \\5 + 5;
+        \\5 - 5;
+        \\5 * 5;
+        \\5 / 5;
+        \\5 > 5;
+        \\5 < 5;
+        \\5 == 5;
+        \\5 != 5;
+        \\true == true;
+        \\true != false;
+        \\false == false;
+    ;
+
+    const integer = Node{ .Integer = &.{ .token = .{ .type = .Integer, .literal = "5" }, .value = 5 } };
+    const bool_true = Node{ .Boolean = &.{ .token = .{ .type = .True, .literal = "true" }, .value = true } };
+    const bool_false = Node{ .Boolean = &.{ .token = .{ .type = .False, .literal = "false" }, .value = false } };
+    const expected = [_]Node{
+        .{
+            .ExpressionStatement = &.{
+                .token = integer.token(),
+                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .Plus, .literal = "+" }, .operator = "+", .left_operand = integer, .right_operand = integer } },
+            },
+        },
+        .{
+            .ExpressionStatement = &.{
+                .token = integer.token(),
+                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .Minus, .literal = "-" }, .operator = "-", .left_operand = integer, .right_operand = integer } },
+            },
+        },
+        .{
+            .ExpressionStatement = &.{
+                .token = integer.token(),
+                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .Asterisk, .literal = "*" }, .operator = "*", .left_operand = integer, .right_operand = integer } },
+            },
+        },
+        .{
+            .ExpressionStatement = &.{
+                .token = integer.token(),
+                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .Slash, .literal = "/" }, .operator = "/", .left_operand = integer, .right_operand = integer } },
+            },
+        },
+        .{
+            .ExpressionStatement = &.{
+                .token = integer.token(),
+                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .GreaterThan, .literal = ">" }, .operator = ">", .left_operand = integer, .right_operand = integer } },
+            },
+        },
+        .{
+            .ExpressionStatement = &.{
+                .token = integer.token(),
+                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .LessThan, .literal = "<" }, .operator = "<", .left_operand = integer, .right_operand = integer } },
+            },
+        },
+        .{
+            .ExpressionStatement = &.{
+                .token = integer.token(),
+                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .Equal, .literal = "==" }, .operator = "==", .left_operand = integer, .right_operand = integer } },
+            },
+        },
+        .{
+            .ExpressionStatement = &.{
+                .token = integer.token(),
+                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .NotEqual, .literal = "!=" }, .operator = "!=", .left_operand = integer, .right_operand = integer } },
+            },
+        },
+        .{
+            .ExpressionStatement = &.{
+                .token = bool_true.token(),
+                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .Equal, .literal = "==" }, .operator = "==", .left_operand = bool_true, .right_operand = bool_true } },
+            },
+        },
+        .{
+            .ExpressionStatement = &.{
+                .token = bool_true.token(),
+                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .NotEqual, .literal = "!=" }, .operator = "!=", .left_operand = bool_true, .right_operand = bool_false } },
+            },
+        },
+        .{
+            .ExpressionStatement = &.{
+                .token = bool_false.token(),
+                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .Equal, .literal = "==" }, .operator = "==", .left_operand = bool_false, .right_operand = bool_false } },
+            },
+        },
+    };
+
+    var allocator = std.testing.allocator;
+    var ast = try Ast.parse(allocator, input);
+    defer ast.deinit(allocator);
+
+    // var buffer = try ast.write(allocator);
+    // defer allocator.free(buffer);
+    // std.debug.print("Infix Operators:\n{s}\n", .{buffer});
+
+    try expectEqualAst(&expected, &ast);
+}
+
+test "Operator Precedence" {
+    const Test = struct { input: []const u8, expected: []const u8 };
+    var tests = [_]Test{
+        .{ .input = "-a * b", .expected = "((-a) * b)" },
+        .{ .input = "!-a", .expected = "(!(-a))" },
+        .{ .input = "a + b + c", .expected = "((a + b) + c)" },
+        .{ .input = "a + b - c", .expected = "((a + b) - c)" },
+        .{ .input = "a * b * c", .expected = "((a * b) * c)" },
+        .{ .input = "a * b / c", .expected = "((a * b) / c)" },
+        .{ .input = "a + b / c", .expected = "(a + (b / c))" },
+        .{ .input = "a + b * c + d / e - f", .expected = "(((a + (b * c)) + (d / e)) - f)" },
+        // .{ .input = "3 + 4; -5 * 5", .expected = "(3 + 4)((-5) * 5)" },
+        .{ .input = "5 > 4 == 3 < 4", .expected = "((5 > 4) == (3 < 4))" },
+        .{ .input = "5 < 4 != 3 > 4", .expected = "((5 < 4) != (3 > 4))" },
+        .{ .input = "3 + 4 * 5 == 3 * 1 + 4 * 5", .expected = "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))" },
+        .{ .input = "true", .expected = "true" },
+        .{ .input = "false", .expected = "false" },
+        .{ .input = "3 > 5 == false", .expected = "((3 > 5) == false)" },
+        .{ .input = "3 < 5 == true", .expected = "((3 < 5) == true)" },
+        .{ .input = "1 + (2 + 3) + 4", .expected = "((1 + (2 + 3)) + 4)" },
+        .{ .input = "(5 + 5) * 2", .expected = "((5 + 5) * 2)" },
+        .{ .input = "-(5 + 5)", .expected = "(-(5 + 5))" },
+        .{ .input = "!(true == true)", .expected = "(!(true == true))" },
+        .{ .input = "a + add(b * c) + d", .expected = "((a + add((b * c))) + d)" },
+        .{ .input = "add(a, b, 1, 2 * 3, 4 + 5, add(6, 7 * 8))", .expected = "add(a, b, 1, (2 * 3), (4 + 5), add(6, (7 * 8)))" },
+        .{ .input = "add(a + b + c * d / f + g)", .expected = "add((((a + b) + ((c * d) / f)) + g))" },
+    };
+
+    var allocator = std.testing.allocator;
+    var buffer = std.ArrayList(u8).init(allocator);
+    defer buffer.deinit();
+
+    for (tests) |test_entry| {
+        buffer.shrinkRetainingCapacity(0);
+
+        var ast = try Ast.parse(allocator, test_entry.input);
+        defer ast.deinit(allocator);
+
+        try std.testing.expectEqual(@as(usize, 1), ast.nodes.len);
+
+        try ast.nodes[0].ExpressionStatement.expression.write(&buffer, .debug_precedence);
+
+        try std.testing.expectEqualStrings(test_entry.expected, buffer.items);
+    }
+}
+
+test "If Expression" {
+    const input =
+        \\if (x < y) { x }
+        \\if (x < y) { x } else { y }
+    ;
+
+    const x = Node{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "x" }, .value = "x" } };
+    const y = Node{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "y" }, .value = "y" } };
+    const expected = [_]Node{
+        .{
+            .IfExpression = &.{
+                .token = .{ .type = .If, .literal = "if" },
+                .condition = .{ .InfixExpression = &.{ .token = .{ .type = .LessThan, .literal = "<" }, .operator = "<", .left_operand = x, .right_operand = y } },
+                .consequence = .{
+                    .BlockStatement = &.{
+                        .token = .{ .type = .LeftBrace, .literal = "{" }, //}
+                        .statements = &[_]Node{.{ .ExpressionStatement = &.{ .token = x.token(), .expression = x } }},
+                    },
+                },
+                .alternative = null,
+            },
+        },
+        .{
+            .IfExpression = &.{
+                .token = .{ .type = .If, .literal = "if" },
+                .condition = .{ .InfixExpression = &.{ .token = .{ .type = .LessThan, .literal = "<" }, .operator = "<", .left_operand = x, .right_operand = y } },
+                .consequence = .{
+                    .BlockStatement = &.{
+                        .token = .{ .type = .LeftBrace, .literal = "{" }, //}
+                        .statements = &[_]Node{.{ .ExpressionStatement = &.{ .token = x.token(), .expression = x } }},
+                    },
+                },
+                .alternative = .{
+                    .BlockStatement = &.{
+                        .token = .{ .type = .LeftBrace, .literal = "{" }, //}
+                        .statements = &[_]Node{.{ .ExpressionStatement = &.{ .token = y.token(), .expression = y } }},
+                    },
+                },
+            },
+        },
+    };
+
+    var allocator = std.testing.allocator;
+    var ast = try Ast.parse(allocator, input);
+    defer ast.deinit(allocator);
+
+    // var buffer = try ast.write(allocator);
+    // defer allocator.free(buffer);
+    // std.debug.print("If Expressions:\n{s}\n", .{buffer});
+
+    try expectEqualAst(&expected, &ast);
+}
+
+test "Function Literal" {
+    const input =
+        \\fn(x, y) { x + y; }
+    ;
+
+    const x = Node{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "x" }, .value = "x" } };
+    const y = Node{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "y" }, .value = "y" } };
+    const expected = [_]Node{
+        .{
+            .ExpressionStatement = &.{
+                .token = .{ .type = .Function, .literal = "fn" },
+                .expression = .{
+                    .FunctionLiteral = &.{
+                        .token = .{ .type = .Function, .literal = "fn" },
+                        .parameters = &[_]Node{ x, y },
+                        .body = .{
+                            .BlockStatement = &.{
+                                .token = .{ .type = .LeftBrace, .literal = "{" }, //}
+                                .statements = &[_]Node{.{
+                                    .ExpressionStatement = &.{
+                                        .token = x.token(),
+                                        .expression = .{
+                                            .InfixExpression = &.{
+                                                .token = .{ .type = .Plus, .literal = "+" },
+                                                .operator = "+",
+                                                .left_operand = x,
+                                                .right_operand = y,
+                                            },
+                                        },
+                                    },
+                                }},
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    };
+
+    var allocator = std.testing.allocator;
+    var ast = try Ast.parse(allocator, input);
+    defer ast.deinit(allocator);
+
+    try expectEqualAst(&expected, &ast);
+}
+
+test "Call Expression" {
+    const input =
+        \\add(1, 1 * 2, 1 + 2)
+    ;
+
+    const add = Node{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "add" }, .value = "add" } };
+    const one = Node{ .Integer = &.{ .token = .{ .type = .Integer, .literal = "1" }, .value = 1 } };
+    const two = Node{ .Integer = &.{ .token = .{ .type = .Integer, .literal = "2" }, .value = 2 } };
+    const expected = [_]Node{
+        .{
+            .ExpressionStatement = &.{
+                .token = add.token(),
+                .expression = .{
+                    .CallExpression = &.{
+                        .token = .{ .type = .LeftParen, .literal = "(" }, // )
+                        .function = add,
+                        .arguments = &[_]Node{
+                            one,
+                            .{
+                                .InfixExpression = &.{
+                                    .token = .{ .type = .Asterisk, .literal = "*" },
+                                    .operator = "*",
+                                    .left_operand = one,
+                                    .right_operand = two,
+                                },
+                            },
+                            .{
+                                .InfixExpression = &.{
+                                    .token = .{ .type = .Plus, .literal = "+" },
+                                    .operator = "+",
+                                    .left_operand = one,
+                                    .right_operand = two,
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    };
+
+    var allocator = std.testing.allocator;
+    var ast = try Ast.parse(allocator, input);
+    defer ast.deinit(allocator);
+
+    try expectEqualAst(&expected, &ast);
+}
+
+const TestError = error{ TestExpectedEqual, TestUnexpectedResult };
+
 fn expectEqualAst(expected_nodes: []const Node, ast: *Ast) !void {
-    if (ast.errors.items.len > 0) {
-        std.debug.print("Parse failed with {d} errors:\n", .{ast.errors.items.len});
-        for (ast.errors.items) |message| {
-            std.debug.print("- {s}\n", .{message});
+    if (ast.errors.len > 0) {
+        std.debug.print("Parse failed with {d} errors:\n", .{ast.errors.len});
+        for (ast.errors) |err| {
+            std.debug.print("- {s}\n", .{err});
         }
         try std.testing.expect(false);
     }
 
-    try expectEqualNodes(expected_nodes, ast.node);
+    try expectEqualNodes(expected_nodes, ast.nodes);
 }
 
 fn expectEqualNodes(expected_nodes: []const Node, actual_nodes: []const Node) !void {
@@ -416,8 +789,9 @@ fn expectEqualNodes(expected_nodes: []const Node, actual_nodes: []const Node) !v
     }
 }
 
-fn expectEqualNode(expected: Node, actual: Node) !void {
-    try std.testing.expectEqual(expected, actual);
+fn expectEqualNode(expected: Node, actual: Node) TestError!void {
+    try std.testing.expectEqualStrings(@tagName(expected), @tagName(actual));
+    // try std.testing.expectEqual(@intFromEnum(expected), @intFromEnum(actual));
     switch (expected) {
         // Statements
         .LetStatement => |node| try expectEqualLetStatement(node, actual.LetStatement),
@@ -440,769 +814,88 @@ fn expectEqualNode(expected: Node, actual: Node) !void {
     }
 }
 
-fn expectEqualLetStatement(expected: *Ast.LetStatement, actual: *Ast.LetStatement) !void {
-    try std.testing.expectEqual(expected.token, actual.token);
+fn expectEqualToken(expected: Token, actual: Token) !void {
+    try std.testing.expectEqual(expected.type, actual.type);
+    try std.testing.expectEqualStrings(expected.literal, actual.literal);
 }
 
-fn expectEqualReturnStatement(expected: *Ast.ReturnStatement, actual: *Ast.ReturnStatement) !void {
-    try std.testing.expectEqual(expected.token, actual.token);
+fn expectEqualLetStatement(expected: *const Ast.LetStatement, actual: *const Ast.LetStatement) !void {
+    try expectEqualToken(expected.token, actual.token);
+    try expectEqualNode(expected.name, actual.name);
+    try expectEqualNode(expected.value, actual.value);
 }
 
-fn expectEqualExpressionStatement(expected: *Ast.ExpressionStatement, actual: *Ast.ExpressionStatement) !void {
-    try std.testing.expectEqual(expected.token, actual.token);
+fn expectEqualReturnStatement(expected: *const Ast.ReturnStatement, actual: *const Ast.ReturnStatement) !void {
+    try expectEqualToken(expected.token, actual.token);
+    try expectEqualNode(expected.return_value, actual.return_value);
 }
 
-fn expectEqualBlockStatement(expected: *Ast.BlockStatement, actual: *Ast.BlockStatement) !void {
-    try std.testing.expectEqual(expected.token, actual.token);
+fn expectEqualExpressionStatement(expected: *const Ast.ExpressionStatement, actual: *const Ast.ExpressionStatement) !void {
+    try expectEqualToken(expected.token, actual.token);
+    try expectEqualNode(expected.expression, actual.expression);
 }
 
-fn expectEqualIdentifier(expected: *Ast.Identifier, actual: *Ast.Identifier) !void {
-    try std.testing.expectEqual(expected.token, actual.token);
+fn expectEqualBlockStatement(expected: *const Ast.BlockStatement, actual: *const Ast.BlockStatement) !void {
+    try expectEqualToken(expected.token, actual.token);
+    try expectEqualNodes(expected.statements, actual.statements);
 }
 
-fn expectEqualInteger(expected: *Ast.Integer, actual: *Ast.Integer) !void {
-    try std.testing.expectEqual(expected.token, actual.token);
+fn expectEqualIdentifier(expected: *const Ast.Identifier, actual: *const Ast.Identifier) !void {
+    try expectEqualToken(expected.token, actual.token);
+    try std.testing.expectEqualStrings(expected.value, actual.value);
 }
 
-fn expectEqualBoolean(expected: *Ast.Boolean, actual: *Ast.Boolean) !void {
-    try std.testing.expectEqual(expected.token, actual.token);
+fn expectEqualInteger(expected: *const Ast.Integer, actual: *const Ast.Integer) !void {
+    try expectEqualToken(expected.token, actual.token);
+    try std.testing.expectEqual(expected.value, actual.value);
 }
 
-fn expectEqualPrefixExpression(expected: *Ast.PrefixExpression, actual: *Ast.PrefixExpression) !void {
-    try std.testing.expectEqual(expected.token, actual.token);
+fn expectEqualBoolean(expected: *const Ast.Boolean, actual: *const Ast.Boolean) !void {
+    try expectEqualToken(expected.token, actual.token);
+    try std.testing.expectEqual(expected.value, actual.value);
 }
 
-fn expectEqualInfixExpression(expected: *Ast.InfixExpression, actual: *Ast.InfixExpression) !void {
-    try std.testing.expectEqual(expected.token, actual.token);
+fn expectEqualPrefixExpression(expected: *const Ast.PrefixExpression, actual: *const Ast.PrefixExpression) !void {
+    try expectEqualToken(expected.token, actual.token);
+    try std.testing.expectEqualStrings(expected.operator, actual.operator);
+    try expectEqualNode(expected.operand, actual.operand);
 }
 
-fn expectEqualGroupedExpression(expected: *Ast.GroupedExpression, actual: *Ast.GroupedExpression) !void {
-    try std.testing.expectEqual(expected.token, actual.token);
+fn expectEqualInfixExpression(expected: *const Ast.InfixExpression, actual: *const Ast.InfixExpression) !void {
+    try expectEqualToken(expected.token, actual.token);
+    try std.testing.expectEqualStrings(expected.operator, actual.operator);
+    try expectEqualNode(expected.left_operand, actual.left_operand);
+    try expectEqualNode(expected.right_operand, actual.right_operand);
 }
 
-fn expectEqualIfExpression(expected: *Ast.IfExpression, actual: *Ast.IfExpression) !void {
-    try std.testing.expectEqual(expected.token, actual.token);
+fn expectEqualGroupedExpression(expected: *const Ast.GroupedExpression, actual: *const Ast.GroupedExpression) !void {
+    try expectEqualToken(expected.token, actual.token);
+    try expectEqualNode(expected.expression, actual.expression);
 }
 
-fn expectEqualFunctionLiteral(expected: *Ast.FunctionLiteral, actual: *Ast.FunctionLiteral) !void {
-    try std.testing.expectEqual(expected.token, actual.token);
+fn expectEqualIfExpression(expected: *const Ast.IfExpression, actual: *const Ast.IfExpression) !void {
+    try expectEqualToken(expected.token, actual.token);
+    try expectEqualNode(expected.condition, actual.condition);
+    try expectEqualNode(expected.consequence, actual.consequence);
+    if (expected.alternative) |alternative| {
+        try std.testing.expect(actual.alternative != null);
+        try expectEqualNode(alternative, actual.alternative.?);
+    } else {
+        try std.testing.expectEqual(expected.alternative, actual.alternative);
+    }
 }
 
-fn expectEqualCallExpression(expected: *Ast.CallExpression, actual: *Ast.CallExpression) !void {
-    try std.testing.expectEqual(expected.token, actual.token);
+fn expectEqualFunctionLiteral(expected: *const Ast.FunctionLiteral, actual: *const Ast.FunctionLiteral) !void {
+    try expectEqualToken(expected.token, actual.token);
+    try std.testing.expectEqual(expected.parameters.len, actual.parameters.len);
+    for (expected.parameters, actual.parameters) |expected_param, actual_param| {
+        try expectEqualNode(expected_param, actual_param);
+    }
+    try expectEqualNode(expected.body, actual.body);
 }
 
-// test "Return Statement" {
-//     const input =
-//         \\return 5;
-//         \\return 10;
-//         \\return 993322;
-//     ;
-//
-//     var lexer = Lexer.init(input);
-//
-//     // TODO: Memory management...
-//     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-//     defer arena.deinit();
-//
-//     var allocator = arena.allocator();
-//
-//     var parser = try Parser.init(&lexer, allocator);
-//     defer parser.deinit();
-//
-//     var program = try parser.parseProgram(allocator);
-//     defer program.deinit();
-//
-//     // var buffer: [input.len * 2]u8 = undefined;
-//     // var stream = std.io.fixedBufferStream(&buffer);
-//     // program.write(stream.writer());
-//     // std.debug.print("Return Statements:\n{s}\n", .{buffer});
-//
-//     if (parser.errors.items.len > 0) {
-//         std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
-//         for (parser.errors.items) |message| {
-//             std.debug.print("- {s}\n", .{message});
-//         }
-//         try std.testing.expect(false);
-//     }
-//
-//     try std.testing.expectEqual(program.statements.items.len, 3);
-//
-//     const Expected = struct { name: []const u8, literal: []const u8, value: i64 };
-//     const expected_values = [_]Expected{
-//         .{ .name = "return", .literal = "5", .value = 5 },
-//         .{ .name = "return", .literal = "10", .value = 10 },
-//         .{ .name = "return", .literal = "993322", .value = 993322 },
-//     };
-//
-//     for (expected_values, program.statements.items) |expected, statement| {
-//         try std.testing.expectEqualStrings(expected.name, statement.tokenLiteral());
-//
-//         switch (statement.*) {
-//             .ReturnStatement => |return_statement| {
-//                 try std.testing.expectEqualStrings(expected.name, return_statement.tokenLiteral());
-//                 switch (return_statement.return_value.*) {
-//                     .Integer => |integer| {
-//                         try std.testing.expectEqual(expected.value, integer.value);
-//                         try std.testing.expectEqualStrings(expected.literal, integer.tokenLiteral());
-//                     },
-//                     else => unreachable,
-//                 }
-//             },
-//             else => unreachable,
-//         }
-//     }
-// }
-//
-// test "Identifier/Literal Expression" {
-//     const input =
-//         \\foobar;
-//         \\5;
-//         \\true;
-//         \\false;
-//     ;
-//
-//     var lexer = Lexer.init(input);
-//
-//     // TODO: Memory management...
-//     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-//     defer arena.deinit();
-//
-//     var allocator = arena.allocator();
-//
-//     var parser = try Parser.init(&lexer, allocator);
-//     defer parser.deinit();
-//
-//     var program = try parser.parseProgram(allocator);
-//     defer program.deinit();
-//
-//     // var buffer: [input.len * 2]u8 = undefined;
-//     // var stream = std.io.fixedBufferStream(&buffer);
-//     // program.write(stream.writer());
-//     // std.debug.print("Identifier/Literal Expressions:\n{s}\n", .{buffer});
-//
-//     if (parser.errors.items.len > 0) {
-//         std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
-//         for (parser.errors.items) |message| {
-//             std.debug.print("- {s}\n", .{message});
-//         }
-//         try std.testing.expect(false);
-//     }
-//
-//     try std.testing.expectEqual(program.statements.items.len, 4);
-//
-//     const Expected = struct { literal: []const u8, value: union { string: []const u8, int: i64, boolean: bool } };
-//     const expected_values = [_]Expected{
-//         .{ .literal = "foobar", .value = .{ .string = "foobar" } },
-//         .{ .literal = "5", .value = .{ .int = 5 } },
-//         .{ .literal = "true", .value = .{ .boolean = true } },
-//         .{ .literal = "false", .value = .{ .boolean = false } },
-//     };
-//
-//     for (expected_values, program.statements.items) |expected, statement| {
-//         try std.testing.expectEqualStrings(expected.literal, statement.tokenLiteral());
-//
-//         switch (statement.*) {
-//             .ExpressionStatement => |expr_statement| {
-//                 switch (expr_statement.expression.*) {
-//                     .Identifier => |identifier| {
-//                         try std.testing.expectEqualStrings(expected.value.string, identifier.value);
-//                         try std.testing.expectEqualStrings(expected.literal, identifier.tokenLiteral());
-//                     },
-//                     .Integer => |integer| {
-//                         try std.testing.expectEqual(expected.value.int, integer.value);
-//                         try std.testing.expectEqualStrings(expected.literal, integer.tokenLiteral());
-//                     },
-//                     .Boolean => |boolean| {
-//                         try std.testing.expectEqual(expected.value.boolean, boolean.value);
-//                         try std.testing.expectEqualStrings(expected.literal, boolean.tokenLiteral());
-//                     },
-//                     else => unreachable,
-//                 }
-//             },
-//             else => unreachable,
-//         }
-//     }
-// }
-//
-// test "Prefix Operators" {
-//     const input =
-//         \\!5;
-//         \\-15;
-//     ;
-//
-//     var lexer = Lexer.init(input);
-//
-//     // TODO: Memory management...
-//     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-//     defer arena.deinit();
-//
-//     var allocator = arena.allocator();
-//
-//     var parser = try Parser.init(&lexer, allocator);
-//     defer parser.deinit();
-//
-//     var program = try parser.parseProgram(allocator);
-//     defer program.deinit();
-//
-//     // var buffer: [input.len * 2]u8 = undefined;
-//     // var stream = std.io.fixedBufferStream(&buffer);
-//     // program.write(stream.writer());
-//     // std.debug.print("Prefix Operators:\n{s}\n", .{buffer});
-//
-//     if (parser.errors.items.len > 0) {
-//         std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
-//         for (parser.errors.items) |message| {
-//             std.debug.print("- {s}\n", .{message});
-//         }
-//         try std.testing.expect(false);
-//     }
-//
-//     try std.testing.expectEqual(program.statements.items.len, 2);
-//
-//     const Expected = struct { prefix: []const u8, literal: []const u8, value: i64 };
-//     const expected_values = [_]Expected{
-//         .{ .prefix = "!", .literal = "5", .value = 5 },
-//         .{ .prefix = "-", .literal = "15", .value = 15 },
-//     };
-//
-//     for (expected_values, program.statements.items) |expected, statement| {
-//         try std.testing.expectEqualStrings(expected.prefix, statement.tokenLiteral());
-//
-//         switch (statement.*) {
-//             .ExpressionStatement => |expr_statement| {
-//                 switch (expr_statement.expression.*) {
-//                     .PrefixExpression => |prefix_expression| {
-//                         try std.testing.expectEqualStrings(expected.prefix, prefix_expression.operator);
-//                         try std.testing.expectEqualStrings(expected.prefix, prefix_expression.tokenLiteral());
-//                         switch (prefix_expression.operand.*) {
-//                             .Integer => |integer| {
-//                                 try std.testing.expectEqual(expected.value, integer.value);
-//                                 try std.testing.expectEqualStrings(expected.literal, integer.tokenLiteral());
-//                             },
-//                             else => unreachable,
-//                         }
-//                     },
-//                     else => unreachable,
-//                 }
-//             },
-//             else => unreachable,
-//         }
-//     }
-// }
-//
-// test "Infix Operators" {
-//     const input =
-//         \\5 + 5;
-//         \\5 - 5;
-//         \\5 * 5;
-//         \\5 / 5;
-//         \\5 > 5;
-//         \\5 < 5;
-//         \\5 == 5;
-//         \\5 != 5;
-//         \\true == true;
-//         \\true != false;
-//         \\false == false;
-//     ;
-//
-//     var lexer = Lexer.init(input);
-//
-//     // TODO: Memory management...
-//     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-//     defer arena.deinit();
-//
-//     var allocator = arena.allocator();
-//
-//     var parser = try Parser.init(&lexer, allocator);
-//     defer parser.deinit();
-//
-//     var program = try parser.parseProgram(allocator);
-//     defer program.deinit();
-//
-//     // var buffer: [input.len * 2]u8 = undefined;
-//     // var stream = std.io.fixedBufferStream(&buffer);
-//     // program.write(stream.writer());
-//     // std.debug.print("Infix Operators:\n{s}\n", .{buffer});
-//
-//     if (parser.errors.items.len > 0) {
-//         std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
-//         for (parser.errors.items) |message| {
-//             std.debug.print("- {s}\n", .{message});
-//         }
-//         try std.testing.expect(false);
-//     }
-//
-//     try std.testing.expectEqual(program.statements.items.len, 11);
-//
-//     const Value = struct { literal: []const u8, value: union { int: i64, boolean: bool } };
-//     const Expected = struct { lhs: Value, operator: []const u8, rhs: Value };
-//     const expected_values = [_]Expected{
-//         .{ .lhs = .{ .literal = "5", .value = .{ .int = 5 } }, .operator = "+", .rhs = .{ .literal = "5", .value = .{ .int = 5 } } },
-//         .{ .lhs = .{ .literal = "5", .value = .{ .int = 5 } }, .operator = "-", .rhs = .{ .literal = "5", .value = .{ .int = 5 } } },
-//         .{ .lhs = .{ .literal = "5", .value = .{ .int = 5 } }, .operator = "*", .rhs = .{ .literal = "5", .value = .{ .int = 5 } } },
-//         .{ .lhs = .{ .literal = "5", .value = .{ .int = 5 } }, .operator = "/", .rhs = .{ .literal = "5", .value = .{ .int = 5 } } },
-//         .{ .lhs = .{ .literal = "5", .value = .{ .int = 5 } }, .operator = ">", .rhs = .{ .literal = "5", .value = .{ .int = 5 } } },
-//         .{ .lhs = .{ .literal = "5", .value = .{ .int = 5 } }, .operator = "<", .rhs = .{ .literal = "5", .value = .{ .int = 5 } } },
-//         .{ .lhs = .{ .literal = "5", .value = .{ .int = 5 } }, .operator = "==", .rhs = .{ .literal = "5", .value = .{ .int = 5 } } },
-//         .{ .lhs = .{ .literal = "5", .value = .{ .int = 5 } }, .operator = "!=", .rhs = .{ .literal = "5", .value = .{ .int = 5 } } },
-//         .{ .lhs = .{ .literal = "true", .value = .{ .boolean = true } }, .operator = "==", .rhs = .{ .literal = "true", .value = .{ .boolean = true } } },
-//         .{ .lhs = .{ .literal = "true", .value = .{ .boolean = true } }, .operator = "!=", .rhs = .{ .literal = "false", .value = .{ .boolean = false } } },
-//         .{ .lhs = .{ .literal = "false", .value = .{ .boolean = false } }, .operator = "==", .rhs = .{ .literal = "false", .value = .{ .boolean = false } } },
-//     };
-//
-//     for (expected_values, program.statements.items) |expected, statement| {
-//         try std.testing.expectEqualStrings(expected.lhs.literal, statement.tokenLiteral());
-//
-//         switch (statement.*) {
-//             .ExpressionStatement => |expr_statement| {
-//                 switch (expr_statement.expression.*) {
-//                     .InfixExpression => |infix_expression| {
-//                         try std.testing.expectEqualStrings(expected.operator, infix_expression.operator);
-//                         try std.testing.expectEqualStrings(expected.operator, infix_expression.tokenLiteral());
-//                         switch (infix_expression.left_operand.*) {
-//                             .Integer => |integer| {
-//                                 try std.testing.expectEqual(expected.lhs.value.int, integer.value);
-//                                 try std.testing.expectEqualStrings(expected.lhs.literal, integer.tokenLiteral());
-//                             },
-//                             .Boolean => |boolean| {
-//                                 try std.testing.expectEqual(expected.lhs.value.boolean, boolean.value);
-//                                 try std.testing.expectEqualStrings(expected.lhs.literal, boolean.tokenLiteral());
-//                             },
-//                             else => unreachable,
-//                         }
-//                         switch (infix_expression.right_operand.*) {
-//                             .Integer => |integer| {
-//                                 try std.testing.expectEqual(expected.rhs.value.int, integer.value);
-//                                 try std.testing.expectEqualStrings(expected.rhs.literal, integer.tokenLiteral());
-//                             },
-//                             .Boolean => |boolean| {
-//                                 try std.testing.expectEqual(expected.rhs.value.boolean, boolean.value);
-//                                 try std.testing.expectEqualStrings(expected.rhs.literal, boolean.tokenLiteral());
-//                             },
-//                             else => unreachable,
-//                         }
-//                     },
-//                     else => unreachable,
-//                 }
-//             },
-//             else => unreachable,
-//         }
-//     }
-// }
-//
-// test "Operator Precedence" {
-//     const Test = struct { input: []const u8, expected: []const u8 };
-//     var tests = [_]Test{
-//         .{ .input = "-a * b;\n", .expected = "((-a) * b);\n" },
-//         .{ .input = "!-a;\n", .expected = "(!(-a));\n" },
-//         .{ .input = "a + b + c;\n", .expected = "((a + b) + c);\n" },
-//         .{ .input = "a + b - c;\n", .expected = "((a + b) - c);\n" },
-//         .{ .input = "a * b * c;\n", .expected = "((a * b) * c);\n" },
-//         .{ .input = "a * b / c;\n", .expected = "((a * b) / c);\n" },
-//         .{ .input = "a + b / c;\n", .expected = "(a + (b / c));\n" },
-//         .{ .input = "a + b * c + d / e - f;\n", .expected = "(((a + (b * c)) + (d / e)) - f);\n" },
-//         .{ .input = "3 + 4;\n-5 * 5;\n", .expected = "(3 + 4);\n((-5) * 5);\n" },
-//         .{ .input = "5 > 4 == 3 < 4;\n", .expected = "((5 > 4) == (3 < 4));\n" },
-//         .{ .input = "5 < 4 != 3 > 4;\n", .expected = "((5 < 4) != (3 > 4));\n" },
-//         .{ .input = "3 + 4 * 5 == 3 * 1 + 4 * 5;\n", .expected = "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)));\n" },
-//         .{ .input = "true;\n", .expected = "true;\n" },
-//         .{ .input = "false;\n", .expected = "false;\n" },
-//         .{ .input = "3 > 5 == false;\n", .expected = "((3 > 5) == false);\n" },
-//         .{ .input = "3 < 5 == true;\n", .expected = "((3 < 5) == true);\n" },
-//         .{ .input = "1 + (2 + 3) + 4;\n", .expected = "((1 + (2 + 3)) + 4);\n" },
-//         .{ .input = "(5 + 5) * 2;\n", .expected = "((5 + 5) * 2);\n" },
-//         .{ .input = "-(5 + 5);\n", .expected = "(-(5 + 5));\n" },
-//         .{ .input = "!(true == true);\n", .expected = "(!(true == true));\n" },
-//         .{ .input = "a + add(b * c) + d", .expected = "((a + add((b * c))) + d);\n" },
-//         .{ .input = "add(a, b, 1, 2 * 3, 4 + 5, add(6, 7 * 8))", .expected = "add(a, b, 1, (2 * 3), (4 + 5), add(6, (7 * 8)));\n" },
-//         .{ .input = "add(a + b + c * d / f + g)", .expected = "add((((a + b) + ((c * d) / f)) + g));\n" },
-//     };
-//
-//     // TODO: Memory management...
-//     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-//     defer arena.deinit();
-//
-//     var allocator = arena.allocator();
-//
-//     for (tests) |test_entry| {
-//         var lexer = Lexer.init(test_entry.input);
-//
-//         var parser = try Parser.init(&lexer, allocator);
-//         defer parser.deinit();
-//
-//         var program = try parser.parseProgram(allocator);
-//         defer program.deinit();
-//
-//         var buffer = try allocator.alloc(u8, test_entry.expected.len);
-//         defer allocator.free(buffer);
-//
-//         var buf_writer = std.io.fixedBufferStream(buffer);
-//
-//         program.write(buf_writer.writer());
-//
-//         try std.testing.expectEqualStrings(test_entry.expected, buffer);
-//     }
-// }
-//
-// test "If Expression" {
-//     const input =
-//         \\if (x < y) { x }
-//         \\if (x < y) { x } else { y }
-//     ;
-//
-//     var lexer = Lexer.init(input);
-//
-//     // TODO: Memory management...
-//     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-//     defer arena.deinit();
-//
-//     var allocator = arena.allocator();
-//
-//     var parser = try Parser.init(&lexer, allocator);
-//     defer parser.deinit();
-//
-//     var program = try parser.parseProgram(allocator);
-//     defer program.deinit();
-//
-//     // var buffer: [input.len * 2]u8 = undefined;
-//     // var stream = std.io.fixedBufferStream(&buffer);
-//     // program.write(stream.writer());
-//     // std.debug.print("If Expression:\n{s}\n", .{buffer});
-//
-//     if (parser.errors.items.len > 0) {
-//         std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
-//         for (parser.errors.items) |message| {
-//             std.debug.print("- {s}\n", .{message});
-//         }
-//         try std.testing.expect(false);
-//     }
-//
-//     try std.testing.expectEqual(@as(usize, 2), program.statements.items.len);
-//
-//     const Expected = struct {
-//         token: []const u8,
-//         condition: struct { lhs: []const u8, operator: []const u8, rhs: []const u8 },
-//         consequence: []const u8,
-//         alternative: ?[]const u8,
-//     };
-//
-//     const expected_values = [_]Expected{
-//         .{
-//             .token = "if",
-//             .condition = .{ .lhs = "x", .operator = "<", .rhs = "y" },
-//             .consequence = "x",
-//             .alternative = null,
-//         },
-//         .{
-//             .token = "if",
-//             .condition = .{ .lhs = "x", .operator = "<", .rhs = "y" },
-//             .consequence = "x",
-//             .alternative = "y",
-//         },
-//     };
-//
-//     for (expected_values, program.statements.items) |expected, statement| {
-//         try std.testing.expectEqualStrings(expected.token, statement.tokenLiteral());
-//
-//         switch (statement.*) {
-//             .ExpressionStatement => |expr_statement| {
-//                 switch (expr_statement.expression.*) {
-//                     .IfExpression => |if_expression| {
-//                         try std.testing.expectEqualStrings(expected.token, if_expression.tokenLiteral());
-//                         switch (if_expression.condition.*) {
-//                             .InfixExpression => |infix_expression| {
-//                                 try std.testing.expectEqualStrings(expected.condition.operator, infix_expression.operator);
-//                                 try std.testing.expectEqualStrings(expected.condition.operator, infix_expression.tokenLiteral());
-//                                 switch (infix_expression.left_operand.*) {
-//                                     .Identifier => |identifier| {
-//                                         try std.testing.expectEqualStrings(expected.condition.lhs, identifier.value);
-//                                         try std.testing.expectEqualStrings(expected.condition.lhs, identifier.tokenLiteral());
-//                                     },
-//                                     else => unreachable,
-//                                 }
-//                                 switch (infix_expression.right_operand.*) {
-//                                     .Identifier => |identifier| {
-//                                         try std.testing.expectEqualStrings(expected.condition.rhs, identifier.value);
-//                                         try std.testing.expectEqualStrings(expected.condition.rhs, identifier.tokenLiteral());
-//                                     },
-//                                     else => unreachable,
-//                                 }
-//                             },
-//                             else => unreachable,
-//                         }
-//                         try std.testing.expectEqual(@as(usize, 1), if_expression.consequence.statements.items.len);
-//                         switch (if_expression.consequence.statements.items[0].*) {
-//                             .ExpressionStatement => |consq_statement| {
-//                                 switch (consq_statement.expression.*) {
-//                                     .Identifier => |identifier| {
-//                                         try std.testing.expectEqualStrings(expected.consequence, identifier.value);
-//                                         try std.testing.expectEqualStrings(expected.consequence, identifier.tokenLiteral());
-//                                     },
-//                                     else => unreachable,
-//                                 }
-//                             },
-//                             else => unreachable,
-//                         }
-//                         if (expected.alternative) |alternative| {
-//                             try std.testing.expectEqual(@as(usize, 1), if_expression.alternative.?.statements.items.len);
-//                             switch (if_expression.alternative.?.statements.items[0].*) {
-//                                 .ExpressionStatement => |alt_statement| {
-//                                     switch (alt_statement.expression.*) {
-//                                         .Identifier => |identifier| {
-//                                             try std.testing.expectEqualStrings(alternative, identifier.value);
-//                                             try std.testing.expectEqualStrings(alternative, identifier.tokenLiteral());
-//                                         },
-//                                         else => unreachable,
-//                                     }
-//                                 },
-//                                 else => unreachable,
-//                             }
-//                         } else {
-//                             try std.testing.expectEqual(expected.alternative, null);
-//                         }
-//                     },
-//                     else => unreachable,
-//                 }
-//             },
-//             else => unreachable,
-//         }
-//     }
-// }
-//
-// test "Function Literal" {
-//     const input =
-//         \\fn(x, y) { x + y; }
-//     ;
-//
-//     var lexer = Lexer.init(input);
-//
-//     // TODO: Memory management...
-//     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-//     defer arena.deinit();
-//
-//     var allocator = arena.allocator();
-//
-//     var parser = try Parser.init(&lexer, allocator);
-//     defer parser.deinit();
-//
-//     var program = try parser.parseProgram(allocator);
-//     defer program.deinit();
-//
-//     // var buffer: [input.len * 2]u8 = undefined;
-//     // var stream = std.io.fixedBufferStream(&buffer);
-//     // program.write(stream.writer());
-//     // std.debug.print("Function Literal:\n{s}\n", .{buffer});
-//
-//     if (parser.errors.items.len > 0) {
-//         std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
-//         for (parser.errors.items) |message| {
-//             std.debug.print("- {s}\n", .{message});
-//         }
-//         try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
-//     }
-//
-//     try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
-//
-//     const Expected = struct {
-//         token: []const u8,
-//         parameters: [2][]const u8,
-//         body: struct { lhs: []const u8, operator: []const u8, rhs: []const u8 },
-//     };
-//
-//     const expected_values = [_]Expected{
-//         .{
-//             .token = "fn",
-//             .parameters = .{ "x", "y" },
-//             .body = .{ .lhs = "x", .operator = "+", .rhs = "y" },
-//         },
-//     };
-//
-//     for (expected_values, program.statements.items) |expected, statement| {
-//         try std.testing.expectEqualStrings(expected.token, statement.tokenLiteral());
-//
-//         switch (statement.*) {
-//             .ExpressionStatement => |expr_statement| {
-//                 switch (expr_statement.expression.*) {
-//                     .FunctionLiteral => |function_literal| {
-//                         try std.testing.expectEqualStrings(expected.token, function_literal.tokenLiteral());
-//                         try std.testing.expectEqual(expected.parameters.len, function_literal.parameters.items.len);
-//                         for (expected.parameters, function_literal.parameters.items) |expected_param, function_param| {
-//                             try std.testing.expectEqualStrings(expected_param, function_param.value);
-//                             try std.testing.expectEqualStrings(expected_param, function_param.tokenLiteral());
-//                         }
-//                         try std.testing.expectEqual(@as(usize, 1), function_literal.body.statements.items.len);
-//                         switch (function_literal.body.statements.items[0].*) {
-//                             .ExpressionStatement => |body_statement| {
-//                                 switch (body_statement.expression.*) {
-//                                     .InfixExpression => |infix_expression| {
-//                                         try std.testing.expectEqualStrings(expected.body.operator, infix_expression.operator);
-//                                         try std.testing.expectEqualStrings(expected.body.operator, infix_expression.tokenLiteral());
-//                                         switch (infix_expression.left_operand.*) {
-//                                             .Identifier => |identifier| {
-//                                                 try std.testing.expectEqualStrings(expected.body.lhs, identifier.value);
-//                                                 try std.testing.expectEqualStrings(expected.body.lhs, identifier.tokenLiteral());
-//                                             },
-//                                             else => unreachable,
-//                                         }
-//                                         switch (infix_expression.right_operand.*) {
-//                                             .Identifier => |identifier| {
-//                                                 try std.testing.expectEqualStrings(expected.body.rhs, identifier.value);
-//                                                 try std.testing.expectEqualStrings(expected.body.rhs, identifier.tokenLiteral());
-//                                             },
-//                                             else => unreachable,
-//                                         }
-//                                     },
-//                                     else => unreachable,
-//                                 }
-//                             },
-//                             else => unreachable,
-//                         }
-//                     },
-//                     else => unreachable,
-//                 }
-//             },
-//             else => unreachable,
-//         }
-//     }
-// }
-//
-// test "Call Expression" {
-//     const input =
-//         \\add(1, 2 * 3, 4 + 5)
-//     ;
-//
-//     var lexer = Lexer.init(input);
-//
-//     // TODO: Memory management...
-//     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-//     defer arena.deinit();
-//
-//     var allocator = arena.allocator();
-//
-//     var parser = try Parser.init(&lexer, allocator);
-//     defer parser.deinit();
-//
-//     var program = try parser.parseProgram(allocator);
-//     defer program.deinit();
-//
-//     // var buffer: [input.len * 2]u8 = undefined;
-//     // var stream = std.io.fixedBufferStream(&buffer);
-//     // program.write(stream.writer());
-//     // std.debug.print("Call Expression:\n{s}\n", .{buffer});
-//
-//     if (parser.errors.items.len > 0) {
-//         std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
-//         for (parser.errors.items) |message| {
-//             std.debug.print("- {s}\n", .{message});
-//         }
-//         try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
-//     }
-//
-//     try std.testing.expectEqual(@as(usize, 1), program.statements.items.len);
-//
-//     const Value = struct { literal: []const u8, value: i64 };
-//     const ExpectedArgs = struct { lhs: Value, operator: []const u8, rhs: Value };
-//     var args = [_]ExpectedArgs{
-//         .{ .lhs = .{ .literal = "1", .value = 1 }, .operator = "", .rhs = .{ .literal = "", .value = undefined } },
-//         .{ .lhs = .{ .literal = "2", .value = 2 }, .operator = "*", .rhs = .{ .literal = "3", .value = 3 } },
-//         .{ .lhs = .{ .literal = "4", .value = 4 }, .operator = "+", .rhs = .{ .literal = "5", .value = 5 } },
-//     };
-//
-//     const Expected = struct { token: []const u8, function: []const u8, arguments: []ExpectedArgs };
-//     const expected_values = [_]Expected{
-//         .{
-//             .token = "add",
-//             .function = "add",
-//             .arguments = args[0..],
-//         },
-//     };
-//
-//     for (expected_values, program.statements.items) |expected, statement| {
-//         try std.testing.expectEqualStrings(expected.token, statement.tokenLiteral());
-//
-//         switch (statement.*) {
-//             .ExpressionStatement => |expr_statement| {
-//                 switch (expr_statement.expression.*) {
-//                     .CallExpression => |call_expression| {
-//                         try std.testing.expectEqualStrings("(", call_expression.tokenLiteral());
-//                         switch (call_expression.function.*) {
-//                             .Identifier => |identifier| {
-//                                 try std.testing.expectEqualStrings(expected.function, identifier.value);
-//                                 try std.testing.expectEqualStrings(expected.function, identifier.tokenLiteral());
-//                             },
-//                             else => unreachable,
-//                         }
-//                         try std.testing.expectEqual(expected.arguments.len, call_expression.arguments.items.len);
-//                         for (expected.arguments, call_expression.arguments.items) |expected_arg, call_arg| {
-//                             switch (call_arg.*) {
-//                                 .Integer => |integer| {
-//                                     try std.testing.expectEqual(expected_arg.lhs.value, integer.value);
-//                                     try std.testing.expectEqualStrings(expected_arg.lhs.literal, integer.tokenLiteral());
-//                                 },
-//                                 .InfixExpression => |infix_expression| {
-//                                     try std.testing.expectEqualStrings(expected_arg.operator, infix_expression.operator);
-//                                     try std.testing.expectEqualStrings(expected_arg.operator, infix_expression.tokenLiteral());
-//                                     switch (infix_expression.left_operand.*) {
-//                                         .Integer => |integer| {
-//                                             try std.testing.expectEqual(expected_arg.lhs.value, integer.value);
-//                                             try std.testing.expectEqualStrings(expected_arg.lhs.literal, integer.tokenLiteral());
-//                                         },
-//                                         else => unreachable,
-//                                     }
-//                                     switch (infix_expression.right_operand.*) {
-//                                         .Integer => |integer| {
-//                                             try std.testing.expectEqual(expected_arg.rhs.value, integer.value);
-//                                             try std.testing.expectEqualStrings(expected_arg.rhs.literal, integer.tokenLiteral());
-//                                         },
-//                                         else => unreachable,
-//                                     }
-//                                 },
-//                                 else => unreachable,
-//                             }
-//                         }
-//                     },
-//                     else => unreachable,
-//                 }
-//             },
-//             else => unreachable,
-//         }
-//     }
-// }
-//
-// test "Writing" {
-//     var statement = Ast.Statement{
-//         .LetStatement = @constCast(&Ast.LetStatement{
-//             .token = Token{ .type = .Let, .literal = "let" },
-//             .name = @constCast(&Ast.Identifier{
-//                 .token = Token{ .type = .Identifier, .literal = "myVar" },
-//                 .value = "myVar",
-//             }),
-//             .value = @constCast(&Expression{
-//                 .Identifier = @constCast(&Ast.Identifier{
-//                     .token = Token{ .type = .Identifier, .literal = "anotherVar" },
-//                     .value = "anotherVar",
-//                 }),
-//             }),
-//         }),
-//     };
-//
-//     // TODO: Memory management...
-//     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-//     defer arena.deinit();
-//
-//     var allocator = arena.allocator();
-//
-//     var program = try Program.init(allocator);
-//     defer program.deinit();
-//
-//     try program.statements.append(&statement);
-//
-//     const input = "let myVar = anotherVar;\n";
-//     var buffer: [input.len]u8 = undefined;
-//     var buf_writer = std.io.fixedBufferStream(&buffer);
-//
-//     program.write(buf_writer.writer());
-//
-//     try std.testing.expectEqualStrings(input, &buffer);
-// }
+fn expectEqualCallExpression(expected: *const Ast.CallExpression, actual: *const Ast.CallExpression) !void {
+    try expectEqualToken(expected.token, actual.token);
+    try expectEqualNode(expected.function, actual.function);
+    try expectEqualNodes(expected.arguments, actual.arguments);
+}

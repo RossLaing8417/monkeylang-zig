@@ -5,9 +5,9 @@ const std = @import("std");
 const Lexer = @import("lexer.zig");
 const Parser = @import("parser.zig");
 const Ast = @import("ast.zig");
-const Evaluator = @import("evaluator.zig");
-const Environment = @import("environment.zig");
-const Object = @import("object.zig");
+// const Evaluator = @import("evaluator.zig");
+// const Environment = @import("environment.zig");
+// const Object = @import("object.zig");
 
 const PROMPT = ">> ";
 
@@ -27,8 +27,8 @@ pub fn loop(self: *Repl) !void {
     var in_stream = self.in_file.reader();
     var out_stream = self.out_file.writer();
 
-    var environment = try Environment.init(self.allocator);
-    defer environment.deinit();
+    // var environment = try Environment.init(self.allocator);
+    // defer environment.deinit();
 
     // Repl scope is entire execution run
     var arena = std.heap.ArenaAllocator.init(self.allocator);
@@ -38,8 +38,8 @@ pub fn loop(self: *Repl) !void {
     while (true) {
         _ = try out_stream.write(PROMPT);
 
-        // Not cleaning up, we want the memory to persist while the repl is active
-        var buffer = std.ArrayList([]const u8).init(buf_allocator);
+        // Not explicitly cleaning up, we want the memory to persist while the repl is active
+        var buffer = std.ArrayList(u8).init(buf_allocator);
         var writer = buffer.writer();
 
         while (true) {
@@ -47,37 +47,41 @@ pub fn loop(self: *Repl) !void {
                 error.EndOfStream => break,
                 else => |e| return e,
             };
-            writer.writeByte('\n');
+            try writer.writeByte('\n');
         }
 
         if (buffer.items.len == 0) {
             continue;
         }
 
-        var lexer = Lexer.init(buffer.items);
-        var parser = try Parser.init(&lexer, self.allocator);
-        defer parser.deinit();
+        // var lexer = Lexer.init(buffer.items);
+        // var parser = try Parser.init(&lexer, self.allocator);
+        // defer parser.deinit();
 
-        var program = try parser.parseProgram(self.allocator);
+        // var program = try parser.parseProgram(self.allocator);
 
-        if (parser.errors.items.len > 0) {
-            try out_stream.writeAll("Errors:");
-            for (parser.errors.items) |err| {
-                try out_stream.writeAll("\n\t");
-                try out_stream.writeAll(err);
-            }
-            try out_stream.writeAll("\n");
-            continue;
-        }
+        // if (parser.errors.items.len > 0) {
+        //     try out_stream.writeAll("Errors:");
+        //     for (parser.errors.items) |err| {
+        //         try out_stream.writeAll("\n\t");
+        //         try out_stream.writeAll(err);
+        //     }
+        //     try out_stream.writeAll("\n");
+        //     continue;
+        // }
 
-        var evaluator = Evaluator.init(self.allocator);
+        // var evaluator = Evaluator.init(self.allocator);
 
-        var statement = Ast.Statement{ .Program = program };
-        var result = evaluator.eval(.{ .Statement = &statement }, environment);
+        // var statement = Ast.Statement{ .Program = program };
+        // var result = evaluator.eval(.{ .Statement = &statement }, environment);
 
-        if (result != .Literal or result == .Literal and result.Literal != .Function) {
-            try result.inspect(out_stream);
-            try out_stream.writeAll("\n");
-        }
+        // if (result != .Literal or result == .Literal and result.Literal != .Function) {
+        //     try result.inspect(out_stream);
+        //     try out_stream.writeAll("\n");
+        // }
     }
+}
+
+test {
+    std.testing.refAllDeclsRecursive(Ast);
 }

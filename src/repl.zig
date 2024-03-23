@@ -41,27 +41,27 @@ pub fn loop(self: *Repl) !void {
         ast_store.deinit();
     }
 
+    var out_buffer = std.ArrayList(u8).init(self.allocator);
+    defer out_buffer.deinit();
+
     while (true) {
         _ = try out_stream.write(PROMPT);
 
-        var buffer = std.ArrayList(u8).init(self.allocator);
-        defer buffer.deinit();
+        var in_buffer = std.ArrayList(u8).init(self.allocator);
+        defer in_buffer.deinit();
 
-        var writer = buffer.writer();
+        var writer = in_buffer.writer();
 
-        while (true) {
-            in_stream.streamUntilDelimiter(writer, '\n', null) catch |err| switch (err) {
-                error.EndOfStream => break,
-                else => |e| return e,
-            };
-            try writer.writeByte('\n');
-        }
+        in_stream.streamUntilDelimiter(writer, '\n', null) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => |e| return e,
+        };
 
-        if (buffer.items.len == 0) {
+        if (in_buffer.items.len == 0) {
             continue;
         }
 
-        var ast = try Ast.parse(self.allocator, try buffer.toOwnedSlice());
+        var ast = try Ast.parse(self.allocator, try in_buffer.toOwnedSlice());
 
         if (ast.errors.len > 0) {
             defer {
@@ -80,11 +80,12 @@ pub fn loop(self: *Repl) !void {
         try ast_store.append(ast);
 
         const result = try evaluator.evalAst(&ast, environment);
-        _ = result;
-        // if (result != .Literal or result == .Literal and result.Literal != .Function) {
-        //     try result.inspect(out_stream);
-        //     try out_stream.writeAll("\n");
-        // }
+        if (result != .Literal or result == .Literal and result.Literal != .Function) {
+            out_buffer.shrinkRetainingCapacity(0);
+            try result.inspect(&out_buffer);
+            try out_stream.writeAll(out_buffer.items);
+            try out_stream.writeByte('\n');
+        }
     }
 }
 

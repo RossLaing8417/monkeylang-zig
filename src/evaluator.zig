@@ -7,8 +7,10 @@ const Lexer = @import("lexer.zig");
 const Ast = @import("ast.zig");
 const ObjectType = @import("object.zig");
 const Environment = @import("environment.zig");
+const Builtin = @import("builtin.zig");
 
 const Object = ObjectType.Object;
+const Error = std.mem.Allocator.Error;
 
 const NULL = Object{ .Literal = .{ .Null = .{} } };
 
@@ -58,7 +60,7 @@ pub fn evalNodes(self: *Evaluator, nodes: []const Ast.Node, environment: *Enviro
     return result;
 }
 
-pub fn eval(self: *Evaluator, node: Ast.Node, environment: *Environment) error{OutOfMemory}!Object {
+pub fn eval(self: *Evaluator, node: Ast.Node, environment: *Environment) Error!Object {
     switch (node) {
         // Statements
 
@@ -146,6 +148,10 @@ fn evalReturnStatement(self: *Evaluator, return_statement: *const Ast.ReturnStat
 fn evalIdentifier(self: *Evaluator, identifier: *const Ast.Identifier, environment: *Environment) !Object {
     if (environment.get(identifier.value)) |object| {
         return object.*;
+    }
+
+    if (Builtin.map.get(identifier.value)) |builtin| {
+        return .{ .BuiltinFunction = builtin };
     }
 
     return try self.evalError("Unknown identifier: '{s}'", .{identifier.value});
@@ -308,6 +314,10 @@ fn evalCallExpression(self: *Evaluator, call_expr: *const Ast.CallExpression, en
             return function;
         }
 
+        if (function == .BuiltinFunction) {
+            return self.evalBuiltinFunction(function.BuiltinFunction, call_expr.arguments, environment);
+        }
+
         std.debug.assert(function != .ReturnValue);
 
         if (function.Literal != .Function) {
@@ -348,6 +358,21 @@ fn evalCallExpression(self: *Evaluator, call_expr: *const Ast.CallExpression, en
     }
 
     return result;
+}
+
+fn evalBuiltinFunction(self: *Evaluator, builtin: ObjectType.BuiltinFunction, arguments: []const Ast.Node, environment: *Environment) !Object {
+    const args = try self.allocator.alloc(Object, arguments.len);
+    defer self.allocator.free(args);
+
+    for (arguments, args) |argument, *arg| {
+        var result = try self.eval(argument, environment);
+        if (result == .Error) {
+            return result;
+        }
+        arg.* = result;
+    }
+
+    return builtin.func(self, args);
 }
 
 fn isTruthy(object: Object) bool {
@@ -718,6 +743,58 @@ test "Eval Call Expression" {
     }
 }
 
+test "Eval Builtins" {
+    const input = [_]TestInput{
+        .{
+            .input =
+            \\len("")
+            ,
+            .expected = .{ .Literal = .{ .Integer = .{ .value = 0 } } },
+        },
+        .{
+            .input =
+            \\len("four")
+            ,
+            .expected = .{ .Literal = .{ .Integer = .{ .value = 4 } } },
+        },
+        .{
+            .input =
+            \\len("Hello World")
+            ,
+            .expected = .{ .Literal = .{ .Integer = .{ .value = 11 } } },
+        },
+        .{
+            .input =
+            \\len(1)
+            ,
+            .expected = .{ .Error = .{ .value = "Builtin signature mismatch. Expected 'String' but found 'Integer'" } },
+        },
+        .{
+            .input =
+            \\len("one", "two")
+            ,
+            .expected = .{ .Error = .{ .value = "Builtin signature mismatch. Expected 1 argument but found 2" } },
+        },
+    };
+
+    var allocator = std.testing.allocator;
+    var evaluator = try Evaluator.init(allocator);
+    defer evaluator.deinit();
+
+    for (input) |test_input| {
+        var ast = try Ast.parse(allocator, test_input.input);
+        defer ast.deinit(allocator);
+
+        try testAst(&ast);
+
+        var environment = try Environment.init(allocator);
+        defer environment.deinit(allocator);
+
+        var result = try evaluator.evalAst(&ast, environment);
+        try expectEqualObjects(test_input.expected, result);
+    }
+}
+
 test "Eval Closure" {
     const input =
         \\let newAdder = fn(x) {
@@ -760,6 +837,7 @@ fn expectEqualObjects(expected: Object, actual: Object) !void {
     switch (expected) {
         .Literal => |literal| try expectEqualLiterals(literal, actual.Literal),
         .ReturnValue => |return_value| try expectEqualLiterals(return_value, actual.ReturnValue),
+        .BuiltinFunction => try std.testing.expect(false),
         .Error => |err| try std.testing.expectEqualStrings(err.value, actual.Error.value),
     }
 }

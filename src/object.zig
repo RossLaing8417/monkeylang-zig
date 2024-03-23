@@ -3,10 +3,12 @@ const std = @import("std");
 const Ast = @import("ast.zig");
 const Environment = @import("environment.zig");
 const Evaluator = @import("evaluator.zig");
+const Builtin = @import("builtin.zig");
 
 pub const Object = union(enum) {
     Literal: Literal,
     ReturnValue: Literal,
+    BuiltinFunction: BuiltinFunction,
     Error: Error,
 
     pub fn inspect(self: *const Object, buffer: *std.ArrayList(u8)) !void {
@@ -92,11 +94,11 @@ pub const Function = struct {
     }
 };
 
-pub const BuiltInFunction = struct {
+pub const BuiltinFunction = struct {
     name: []const u8,
-    func: fn (*Evaluator, []const Object) Object,
+    func: Builtin.Function,
 
-    pub fn inspect(self: *const BuiltInFunction, buffer: *std.ArrayList(u8)) !void {
+    pub fn inspect(self: *const BuiltinFunction, buffer: *std.ArrayList(u8)) !void {
         var writer = buffer.writer();
         try writer.print("@{s}(...args)", .{self.name});
     }

@@ -1,3 +1,5 @@
+const std = @import("std");
+
 const Ast = @import("ast.zig");
 const Environment = @import("environment.zig");
 

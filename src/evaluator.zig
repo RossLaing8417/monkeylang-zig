@@ -14,17 +14,24 @@ const NULL = Object{ .Literal = .{ .Null = .{} } };
 
 allocator: std.mem.Allocator,
 last_error: std.ArrayList(u8),
+/// This exists as I don't have a solid solution to closures yet
+closure_bin: std.ArrayList(*Environment),
 
 pub fn init(allocator: std.mem.Allocator) !*Evaluator {
     var evaluator = try allocator.create(Evaluator);
     evaluator.* = .{
         .allocator = allocator,
         .last_error = try std.ArrayList(u8).initCapacity(allocator, 64),
+        .closure_bin = std.ArrayList(*Environment).init(allocator),
     };
     return evaluator;
 }
 
 pub fn deinit(self: *Evaluator) void {
+    for (self.closure_bin.items) |environment| {
+        environment.deinit(self.allocator);
+    }
+    self.closure_bin.deinit();
     self.last_error.deinit();
     self.allocator.destroy(self);
 }
@@ -278,9 +285,7 @@ fn evalCallExpression(self: *Evaluator, call_expr: *const Ast.CallExpression, en
     std.debug.assert(call_expr.arguments.len == function.parameters.len);
 
     var enclosed_env = try Environment.initEnclosed(self.allocator, function.environment);
-    defer enclosed_env.deinit(self.allocator);
-
-    try enclosed_env.store.ensureTotalCapacity(@intCast(function.parameters.len));
+    errdefer enclosed_env.deinit(self.allocator);
 
     for (function.parameters, call_expr.arguments) |param, arg| {
         const result = try self.eval(arg, environment);
@@ -290,7 +295,16 @@ fn evalCallExpression(self: *Evaluator, call_expr: *const Ast.CallExpression, en
         try enclosed_env.set(param.value, result);
     }
 
-    return unwrapReturn(try self.eval(.{ .BlockStatement = function.body }, enclosed_env));
+    var result = unwrapReturn(try self.eval(.{ .BlockStatement = function.body }, enclosed_env));
+
+    // Keeping the closure scope alive until I can figure out an elegant solution
+    if (result == .Literal and result.Literal == .Function) {
+        try self.closure_bin.append(enclosed_env);
+    } else {
+        enclosed_env.deinit(self.allocator);
+    }
+
+    return result;
 }
 
 fn isTruthy(object: Object) bool {
@@ -613,6 +627,33 @@ test "Eval Call Expression" {
         var result = try evaluator.evalAst(&ast, environment);
         try expectEqualObjects(test_input.expected, result);
     }
+}
+
+test "Eval Closure" {
+    const input =
+        \\let newAdder = fn(x) {
+        \\    fn(y) { x + y };
+        \\};
+        \\let addTwo = newAdder(2);
+        \\addTwo(2);
+    ;
+
+    var allocator = std.testing.allocator;
+    var ast = try Ast.parse(allocator, input);
+    defer ast.deinit(allocator);
+
+    try testAst(&ast);
+
+    var evaluator = try Evaluator.init(allocator);
+    defer evaluator.deinit();
+
+    var environment = try Environment.init(allocator);
+    defer environment.deinit(allocator);
+
+    const expected = Object{ .Literal = .{ .Integer = .{ .value = 4 } } };
+
+    var result = try evaluator.evalAst(&ast, environment);
+    try expectEqualObjects(expected, result);
 }
 
 fn testAst(ast: *Ast) !void {

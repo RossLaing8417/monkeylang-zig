@@ -2,9 +2,9 @@ const std = @import("std");
 
 const Environment = @This();
 
-const Object = @import("object.zig");
+const Object = @import("object.zig").Object;
 
-const Map = std.StringHashMap(Object.Object);
+const Map = std.StringHashMap(Object);
 
 store: Map,
 outer: ?*Environment,
@@ -30,7 +30,7 @@ pub fn deinit(self: *Environment, allocator: std.mem.Allocator) void {
     allocator.destroy(self);
 }
 
-pub fn get(self: *Environment, name: []const u8) ?*Object.Object {
+pub fn get(self: *Environment, name: []const u8) ?*Object {
     if (self.store.getPtr(name)) |object| {
         return object;
     }
@@ -40,6 +40,6 @@ pub fn get(self: *Environment, name: []const u8) ?*Object.Object {
     return null;
 }
 
-pub fn set(self: *Environment, name: []const u8, value: Object.Object) !void {
+pub fn set(self: *Environment, name: []const u8, value: Object) !void {
     try self.store.put(name, value);
 }

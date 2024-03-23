@@ -131,7 +131,7 @@ fn parseIfExpression(self: *Parser) Error!Node {
 }
 
 fn parseFunctionLiteral(self: *Parser) Error!Node {
-    var parameters = std.ArrayList(Node).init(self.allocator);
+    var parameters = std.ArrayList(*Ast.Identifier).init(self.allocator);
     defer parameters.deinit();
 
     const token = try self.expectToken(.Function);
@@ -146,7 +146,7 @@ fn parseFunctionLiteral(self: *Parser) Error!Node {
             .value = tok.literal,
         };
 
-        try parameters.append(.{ .Identifier = identifier });
+        try parameters.append(identifier);
 
         _ = self.consumeToken(.Comma);
     }
@@ -156,7 +156,7 @@ fn parseFunctionLiteral(self: *Parser) Error!Node {
     var function_literal = try self.allocator.create(Ast.FunctionLiteral);
     function_literal.* = .{
         .token = token,
-        .body = try self.parseBlockStatement(),
+        .body = (try self.parseBlockStatement()).BlockStatement,
         .parameters = try parameters.toOwnedSlice(),
     };
 
@@ -211,7 +211,7 @@ fn parseLetStatement(self: *Parser) Error!Node {
     var let_statement = try self.allocator.create(Ast.LetStatement);
     let_statement.* = Ast.LetStatement{
         .token = self.nextToken(),
-        .name = try self.parseIdentifier(),
+        .name = (try self.parseIdentifier()).Identifier,
     };
 
     _ = try self.expectToken(.Assign);
@@ -364,25 +364,25 @@ test "Let Statement" {
 
     const expected = [_]Node{
         .{
-            .LetStatement = &.{
+            .LetStatement = @constCast(&Ast.LetStatement{
                 .token = .{ .type = .Let, .literal = "let" },
-                .name = .{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "foo" }, .value = "foo" } },
-                .value = .{ .Integer = &.{ .token = .{ .type = .Integer, .literal = "10" }, .value = 10 } },
-            },
+                .name = @constCast(&Ast.Identifier{ .token = .{ .type = .Identifier, .literal = "foo" }, .value = "foo" }),
+                .value = .{ .Integer = @constCast(&Ast.Integer{ .token = .{ .type = .Integer, .literal = "10" }, .value = 10 }) },
+            }),
         },
         .{
-            .LetStatement = &.{
+            .LetStatement = @constCast(&Ast.LetStatement{
                 .token = .{ .type = .Let, .literal = "let" },
-                .name = .{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "bar" }, .value = "bar" } },
-                .value = .{ .Boolean = &.{ .token = .{ .type = .True, .literal = "true" }, .value = true } },
-            },
+                .name = @constCast(&Ast.Identifier{ .token = .{ .type = .Identifier, .literal = "bar" }, .value = "bar" }),
+                .value = .{ .Boolean = @constCast(&Ast.Boolean{ .token = .{ .type = .True, .literal = "true" }, .value = true }) },
+            }),
         },
         .{
-            .LetStatement = &.{
+            .LetStatement = @constCast(&Ast.LetStatement{
                 .token = .{ .type = .Let, .literal = "let" },
-                .name = .{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "baz" }, .value = "baz" } },
-                .value = .{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "foo" }, .value = "foo" } },
-            },
+                .name = @constCast(&Ast.Identifier{ .token = .{ .type = .Identifier, .literal = "baz" }, .value = "baz" }),
+                .value = .{ .Identifier = @constCast(&Ast.Identifier{ .token = .{ .type = .Identifier, .literal = "foo" }, .value = "foo" }) },
+            }),
         },
     };
 
@@ -394,7 +394,7 @@ test "Let Statement" {
     // defer allocator.free(buffer);
     // std.debug.print("Let Statements:\n{s}\n", .{buffer});
 
-    try expectEqualAst(&expected, &ast);
+    try testAst(&expected, &ast);
 }
 
 test "Return Statement" {
@@ -406,22 +406,22 @@ test "Return Statement" {
 
     const expected = [_]Node{
         .{
-            .ReturnStatement = &.{
+            .ReturnStatement = @constCast(&Ast.ReturnStatement{
                 .token = .{ .type = .Return, .literal = "return" },
-                .return_value = .{ .Integer = &.{ .token = .{ .type = .Integer, .literal = "5" }, .value = 5 } },
-            },
+                .return_value = .{ .Integer = @constCast(&Ast.Integer{ .token = .{ .type = .Integer, .literal = "5" }, .value = 5 }) },
+            }),
         },
         .{
-            .ReturnStatement = &.{
+            .ReturnStatement = @constCast(&Ast.ReturnStatement{
                 .token = .{ .type = .Return, .literal = "return" },
-                .return_value = .{ .Boolean = &.{ .token = .{ .type = .False, .literal = "false" }, .value = false } },
-            },
+                .return_value = .{ .Boolean = @constCast(&Ast.Boolean{ .token = .{ .type = .False, .literal = "false" }, .value = false }) },
+            }),
         },
         .{
-            .ReturnStatement = &.{
+            .ReturnStatement = @constCast(&Ast.ReturnStatement{
                 .token = .{ .type = .Return, .literal = "return" },
-                .return_value = .{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "foobar" }, .value = "foobar" } },
-            },
+                .return_value = .{ .Identifier = @constCast(&Ast.Identifier{ .token = .{ .type = .Identifier, .literal = "foobar" }, .value = "foobar" }) },
+            }),
         },
     };
 
@@ -433,7 +433,7 @@ test "Return Statement" {
     // defer allocator.free(buffer);
     // std.debug.print("Return Statements:\n{s}\n", .{buffer});
 
-    try expectEqualAst(&expected, &ast);
+    try testAst(&expected, &ast);
 }
 
 test "Prefix Operators" {
@@ -444,24 +444,24 @@ test "Prefix Operators" {
 
     const expected = [_]Node{
         .{
-            .ExpressionStatement = &.{
+            .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
                 .token = .{ .type = .Bang, .literal = "!" },
-                .expression = .{ .PrefixExpression = &.{
+                .expression = .{ .PrefixExpression = @constCast(&Ast.PrefixExpression{
                     .token = .{ .type = .Bang, .literal = "!" },
                     .operator = "!",
-                    .operand = .{ .Integer = &.{ .token = .{ .type = .Integer, .literal = "5" }, .value = 5 } },
-                } },
-            },
+                    .operand = .{ .Integer = @constCast(&Ast.Integer{ .token = .{ .type = .Integer, .literal = "5" }, .value = 5 }) },
+                }) },
+            }),
         },
         .{
-            .ExpressionStatement = &.{
+            .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
                 .token = .{ .type = .Minus, .literal = "-" },
-                .expression = .{ .PrefixExpression = &.{
+                .expression = .{ .PrefixExpression = @constCast(&Ast.PrefixExpression{
                     .token = .{ .type = .Minus, .literal = "-" },
                     .operator = "-",
-                    .operand = .{ .Integer = &.{ .token = .{ .type = .Integer, .literal = "15" }, .value = 15 } },
-                } },
-            },
+                    .operand = .{ .Integer = @constCast(&Ast.Integer{ .token = .{ .type = .Integer, .literal = "15" }, .value = 15 }) },
+                }) },
+            }),
         },
     };
 
@@ -473,7 +473,7 @@ test "Prefix Operators" {
     // defer allocator.free(buffer);
     // std.debug.print("Prefix Operators:\n{s}\n", .{buffer});
 
-    try expectEqualAst(&expected, &ast);
+    try testAst(&expected, &ast);
 }
 
 test "Infix Operators" {
@@ -491,75 +491,75 @@ test "Infix Operators" {
         \\false == false;
     ;
 
-    const integer = Node{ .Integer = &.{ .token = .{ .type = .Integer, .literal = "5" }, .value = 5 } };
-    const bool_true = Node{ .Boolean = &.{ .token = .{ .type = .True, .literal = "true" }, .value = true } };
-    const bool_false = Node{ .Boolean = &.{ .token = .{ .type = .False, .literal = "false" }, .value = false } };
+    const integer = Node{ .Integer = @constCast(&Ast.Integer{ .token = .{ .type = .Integer, .literal = "5" }, .value = 5 }) };
+    const bool_true = Node{ .Boolean = @constCast(&Ast.Boolean{ .token = .{ .type = .True, .literal = "true" }, .value = true }) };
+    const bool_false = Node{ .Boolean = @constCast(&Ast.Boolean{ .token = .{ .type = .False, .literal = "false" }, .value = false }) };
     const expected = [_]Node{
         .{
-            .ExpressionStatement = &.{
+            .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
                 .token = integer.token(),
-                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .Plus, .literal = "+" }, .operator = "+", .left_operand = integer, .right_operand = integer } },
-            },
+                .expression = .{ .InfixExpression = @constCast(&Ast.InfixExpression{ .token = .{ .type = .Plus, .literal = "+" }, .operator = "+", .left_operand = integer, .right_operand = integer }) },
+            }),
         },
         .{
-            .ExpressionStatement = &.{
+            .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
                 .token = integer.token(),
-                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .Minus, .literal = "-" }, .operator = "-", .left_operand = integer, .right_operand = integer } },
-            },
+                .expression = .{ .InfixExpression = @constCast(&Ast.InfixExpression{ .token = .{ .type = .Minus, .literal = "-" }, .operator = "-", .left_operand = integer, .right_operand = integer }) },
+            }),
         },
         .{
-            .ExpressionStatement = &.{
+            .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
                 .token = integer.token(),
-                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .Asterisk, .literal = "*" }, .operator = "*", .left_operand = integer, .right_operand = integer } },
-            },
+                .expression = .{ .InfixExpression = @constCast(&Ast.InfixExpression{ .token = .{ .type = .Asterisk, .literal = "*" }, .operator = "*", .left_operand = integer, .right_operand = integer }) },
+            }),
         },
         .{
-            .ExpressionStatement = &.{
+            .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
                 .token = integer.token(),
-                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .Slash, .literal = "/" }, .operator = "/", .left_operand = integer, .right_operand = integer } },
-            },
+                .expression = .{ .InfixExpression = @constCast(&Ast.InfixExpression{ .token = .{ .type = .Slash, .literal = "/" }, .operator = "/", .left_operand = integer, .right_operand = integer }) },
+            }),
         },
         .{
-            .ExpressionStatement = &.{
+            .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
                 .token = integer.token(),
-                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .GreaterThan, .literal = ">" }, .operator = ">", .left_operand = integer, .right_operand = integer } },
-            },
+                .expression = .{ .InfixExpression = @constCast(&Ast.InfixExpression{ .token = .{ .type = .GreaterThan, .literal = ">" }, .operator = ">", .left_operand = integer, .right_operand = integer }) },
+            }),
         },
         .{
-            .ExpressionStatement = &.{
+            .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
                 .token = integer.token(),
-                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .LessThan, .literal = "<" }, .operator = "<", .left_operand = integer, .right_operand = integer } },
-            },
+                .expression = .{ .InfixExpression = @constCast(&Ast.InfixExpression{ .token = .{ .type = .LessThan, .literal = "<" }, .operator = "<", .left_operand = integer, .right_operand = integer }) },
+            }),
         },
         .{
-            .ExpressionStatement = &.{
+            .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
                 .token = integer.token(),
-                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .Equal, .literal = "==" }, .operator = "==", .left_operand = integer, .right_operand = integer } },
-            },
+                .expression = .{ .InfixExpression = @constCast(&Ast.InfixExpression{ .token = .{ .type = .Equal, .literal = "==" }, .operator = "==", .left_operand = integer, .right_operand = integer }) },
+            }),
         },
         .{
-            .ExpressionStatement = &.{
+            .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
                 .token = integer.token(),
-                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .NotEqual, .literal = "!=" }, .operator = "!=", .left_operand = integer, .right_operand = integer } },
-            },
+                .expression = .{ .InfixExpression = @constCast(&Ast.InfixExpression{ .token = .{ .type = .NotEqual, .literal = "!=" }, .operator = "!=", .left_operand = integer, .right_operand = integer }) },
+            }),
         },
         .{
-            .ExpressionStatement = &.{
+            .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
                 .token = bool_true.token(),
-                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .Equal, .literal = "==" }, .operator = "==", .left_operand = bool_true, .right_operand = bool_true } },
-            },
+                .expression = .{ .InfixExpression = @constCast(&Ast.InfixExpression{ .token = .{ .type = .Equal, .literal = "==" }, .operator = "==", .left_operand = bool_true, .right_operand = bool_true }) },
+            }),
         },
         .{
-            .ExpressionStatement = &.{
+            .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
                 .token = bool_true.token(),
-                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .NotEqual, .literal = "!=" }, .operator = "!=", .left_operand = bool_true, .right_operand = bool_false } },
-            },
+                .expression = .{ .InfixExpression = @constCast(&Ast.InfixExpression{ .token = .{ .type = .NotEqual, .literal = "!=" }, .operator = "!=", .left_operand = bool_true, .right_operand = bool_false }) },
+            }),
         },
         .{
-            .ExpressionStatement = &.{
+            .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
                 .token = bool_false.token(),
-                .expression = .{ .InfixExpression = &.{ .token = .{ .type = .Equal, .literal = "==" }, .operator = "==", .left_operand = bool_false, .right_operand = bool_false } },
-            },
+                .expression = .{ .InfixExpression = @constCast(&Ast.InfixExpression{ .token = .{ .type = .Equal, .literal = "==" }, .operator = "==", .left_operand = bool_false, .right_operand = bool_false }) },
+            }),
         },
     };
 
@@ -571,7 +571,7 @@ test "Infix Operators" {
     // defer allocator.free(buffer);
     // std.debug.print("Infix Operators:\n{s}\n", .{buffer});
 
-    try expectEqualAst(&expected, &ast);
+    try testAst(&expected, &ast);
 }
 
 test "Operator Precedence" {
@@ -626,39 +626,39 @@ test "If Expression" {
         \\if (x < y) { x } else { y }
     ;
 
-    const x = Node{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "x" }, .value = "x" } };
-    const y = Node{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "y" }, .value = "y" } };
+    const x = Node{ .Identifier = @constCast(&Ast.Identifier{ .token = .{ .type = .Identifier, .literal = "x" }, .value = "x" }) };
+    const y = Node{ .Identifier = @constCast(&Ast.Identifier{ .token = .{ .type = .Identifier, .literal = "y" }, .value = "y" }) };
     const expected = [_]Node{
         .{
-            .IfExpression = &.{
+            .IfExpression = @constCast(&Ast.IfExpression{
                 .token = .{ .type = .If, .literal = "if" },
-                .condition = .{ .InfixExpression = &.{ .token = .{ .type = .LessThan, .literal = "<" }, .operator = "<", .left_operand = x, .right_operand = y } },
+                .condition = .{ .InfixExpression = @constCast(&Ast.InfixExpression{ .token = .{ .type = .LessThan, .literal = "<" }, .operator = "<", .left_operand = x, .right_operand = y }) },
                 .consequence = .{
-                    .BlockStatement = &.{
+                    .BlockStatement = @constCast(&Ast.BlockStatement{
                         .token = .{ .type = .LeftBrace, .literal = "{" }, //}
-                        .statements = &[_]Node{.{ .ExpressionStatement = &.{ .token = x.token(), .expression = x } }},
-                    },
+                        .statements = &[_]Node{.{ .ExpressionStatement = @constCast(&Ast.ExpressionStatement{ .token = x.token(), .expression = x }) }},
+                    }),
                 },
                 .alternative = null,
-            },
+            }),
         },
         .{
-            .IfExpression = &.{
+            .IfExpression = @constCast(&Ast.IfExpression{
                 .token = .{ .type = .If, .literal = "if" },
-                .condition = .{ .InfixExpression = &.{ .token = .{ .type = .LessThan, .literal = "<" }, .operator = "<", .left_operand = x, .right_operand = y } },
+                .condition = .{ .InfixExpression = @constCast(&Ast.InfixExpression{ .token = .{ .type = .LessThan, .literal = "<" }, .operator = "<", .left_operand = x, .right_operand = y }) },
                 .consequence = .{
-                    .BlockStatement = &.{
+                    .BlockStatement = @constCast(&Ast.BlockStatement{
                         .token = .{ .type = .LeftBrace, .literal = "{" }, //}
-                        .statements = &[_]Node{.{ .ExpressionStatement = &.{ .token = x.token(), .expression = x } }},
-                    },
+                        .statements = &[_]Node{.{ .ExpressionStatement = @constCast(&Ast.ExpressionStatement{ .token = x.token(), .expression = x }) }},
+                    }),
                 },
                 .alternative = .{
-                    .BlockStatement = &.{
+                    .BlockStatement = @constCast(&Ast.BlockStatement{
                         .token = .{ .type = .LeftBrace, .literal = "{" }, //}
-                        .statements = &[_]Node{.{ .ExpressionStatement = &.{ .token = y.token(), .expression = y } }},
-                    },
+                        .statements = &[_]Node{.{ .ExpressionStatement = @constCast(&Ast.ExpressionStatement{ .token = y.token(), .expression = y }) }},
+                    }),
                 },
-            },
+            }),
         },
     };
 
@@ -670,7 +670,7 @@ test "If Expression" {
     // defer allocator.free(buffer);
     // std.debug.print("If Expressions:\n{s}\n", .{buffer});
 
-    try expectEqualAst(&expected, &ast);
+    try testAst(&expected, &ast);
 }
 
 test "Function Literal" {
@@ -678,37 +678,35 @@ test "Function Literal" {
         \\fn(x, y) { x + y; }
     ;
 
-    const x = Node{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "x" }, .value = "x" } };
-    const y = Node{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "y" }, .value = "y" } };
+    const x = Node{ .Identifier = @constCast(&Ast.Identifier{ .token = .{ .type = .Identifier, .literal = "x" }, .value = "x" }) };
+    const y = Node{ .Identifier = @constCast(&Ast.Identifier{ .token = .{ .type = .Identifier, .literal = "y" }, .value = "y" }) };
     const expected = [_]Node{
         .{
-            .ExpressionStatement = &.{
+            .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
                 .token = .{ .type = .Function, .literal = "fn" },
                 .expression = .{
-                    .FunctionLiteral = &.{
+                    .FunctionLiteral = @constCast(&Ast.FunctionLiteral{
                         .token = .{ .type = .Function, .literal = "fn" },
-                        .parameters = &[_]Node{ x, y },
-                        .body = .{
-                            .BlockStatement = &.{
-                                .token = .{ .type = .LeftBrace, .literal = "{" }, //}
-                                .statements = &[_]Node{.{
-                                    .ExpressionStatement = &.{
-                                        .token = x.token(),
-                                        .expression = .{
-                                            .InfixExpression = &.{
-                                                .token = .{ .type = .Plus, .literal = "+" },
-                                                .operator = "+",
-                                                .left_operand = x,
-                                                .right_operand = y,
-                                            },
-                                        },
+                        .parameters = &[_]*Ast.Identifier{ @constCast(x.Identifier), @constCast(y.Identifier) },
+                        .body = @constCast(&Ast.BlockStatement{
+                            .token = .{ .type = .LeftBrace, .literal = "{" }, //}
+                            .statements = &[_]Node{.{
+                                .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
+                                    .token = x.token(),
+                                    .expression = .{
+                                        .InfixExpression = @constCast(&Ast.InfixExpression{
+                                            .token = .{ .type = .Plus, .literal = "+" },
+                                            .operator = "+",
+                                            .left_operand = x,
+                                            .right_operand = y,
+                                        }),
                                     },
-                                }},
-                            },
-                        },
-                    },
+                                }),
+                            }},
+                        }),
+                    }),
                 },
-            },
+            }),
         },
     };
 
@@ -716,7 +714,7 @@ test "Function Literal" {
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
 
-    try expectEqualAst(&expected, &ast);
+    try testAst(&expected, &ast);
 }
 
 test "Call Expression" {
@@ -724,39 +722,39 @@ test "Call Expression" {
         \\add(1, 1 * 2, 1 + 2)
     ;
 
-    const add = Node{ .Identifier = &.{ .token = .{ .type = .Identifier, .literal = "add" }, .value = "add" } };
-    const one = Node{ .Integer = &.{ .token = .{ .type = .Integer, .literal = "1" }, .value = 1 } };
-    const two = Node{ .Integer = &.{ .token = .{ .type = .Integer, .literal = "2" }, .value = 2 } };
+    const add = Node{ .Identifier = @constCast(&Ast.Identifier{ .token = .{ .type = .Identifier, .literal = "add" }, .value = "add" }) };
+    const one = Node{ .Integer = @constCast(&Ast.Integer{ .token = .{ .type = .Integer, .literal = "1" }, .value = 1 }) };
+    const two = Node{ .Integer = @constCast(&Ast.Integer{ .token = .{ .type = .Integer, .literal = "2" }, .value = 2 }) };
     const expected = [_]Node{
         .{
-            .ExpressionStatement = &.{
+            .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
                 .token = add.token(),
                 .expression = .{
-                    .CallExpression = &.{
+                    .CallExpression = @constCast(&Ast.CallExpression{
                         .token = .{ .type = .LeftParen, .literal = "(" }, // )
                         .function = add,
                         .arguments = &[_]Node{
                             one,
                             .{
-                                .InfixExpression = &.{
+                                .InfixExpression = @constCast(&Ast.InfixExpression{
                                     .token = .{ .type = .Asterisk, .literal = "*" },
                                     .operator = "*",
                                     .left_operand = one,
                                     .right_operand = two,
-                                },
+                                }),
                             },
                             .{
-                                .InfixExpression = &.{
+                                .InfixExpression = @constCast(&Ast.InfixExpression{
                                     .token = .{ .type = .Plus, .literal = "+" },
                                     .operator = "+",
                                     .left_operand = one,
                                     .right_operand = two,
-                                },
+                                }),
                             },
                         },
-                    },
+                    }),
                 },
-            },
+            }),
         },
     };
 
@@ -764,12 +762,12 @@ test "Call Expression" {
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
 
-    try expectEqualAst(&expected, &ast);
+    try testAst(&expected, &ast);
 }
 
 const TestError = error{ TestExpectedEqual, TestUnexpectedResult };
 
-fn expectEqualAst(expected_nodes: []const Node, ast: *Ast) !void {
+fn testAst(expected_nodes: []const Node, ast: *Ast) !void {
     if (ast.errors.len > 0) {
         std.debug.print("Parse failed with {d} errors:\n", .{ast.errors.len});
         for (ast.errors) |err| {
@@ -821,7 +819,7 @@ fn expectEqualToken(expected: Token, actual: Token) !void {
 
 fn expectEqualLetStatement(expected: *const Ast.LetStatement, actual: *const Ast.LetStatement) !void {
     try expectEqualToken(expected.token, actual.token);
-    try expectEqualNode(expected.name, actual.name);
+    try expectEqualIdentifier(expected.name, actual.name);
     try expectEqualNode(expected.value, actual.value);
 }
 
@@ -889,9 +887,9 @@ fn expectEqualFunctionLiteral(expected: *const Ast.FunctionLiteral, actual: *con
     try expectEqualToken(expected.token, actual.token);
     try std.testing.expectEqual(expected.parameters.len, actual.parameters.len);
     for (expected.parameters, actual.parameters) |expected_param, actual_param| {
-        try expectEqualNode(expected_param, actual_param);
+        try expectEqualIdentifier(expected_param, actual_param);
     }
-    try expectEqualNode(expected.body, actual.body);
+    try expectEqualBlockStatement(expected.body, actual.body);
 }
 
 fn expectEqualCallExpression(expected: *const Ast.CallExpression, actual: *const Ast.CallExpression) !void {

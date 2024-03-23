@@ -69,23 +69,23 @@ pub fn write(self: *Ast, allocator: std.mem.Allocator) ![]const u8 {
 
 pub const Node = union(enum) {
     // Statements
-    LetStatement: *const LetStatement,
-    ReturnStatement: *const ReturnStatement,
-    ExpressionStatement: *const ExpressionStatement,
+    LetStatement: *LetStatement,
+    ReturnStatement: *ReturnStatement,
+    ExpressionStatement: *ExpressionStatement,
 
-    BlockStatement: *const BlockStatement,
+    BlockStatement: *BlockStatement,
 
     // Expressions
-    Identifier: *const Identifier,
-    Integer: *const Integer,
-    Boolean: *const Boolean,
+    Identifier: *Identifier,
+    Integer: *Integer,
+    Boolean: *Boolean,
 
-    PrefixExpression: *const PrefixExpression,
-    InfixExpression: *const InfixExpression,
-    GroupedExpression: *const GroupedExpression,
-    IfExpression: *const IfExpression,
-    FunctionLiteral: *const FunctionLiteral,
-    CallExpression: *const CallExpression,
+    PrefixExpression: *PrefixExpression,
+    InfixExpression: *InfixExpression,
+    GroupedExpression: *GroupedExpression,
+    IfExpression: *IfExpression,
+    FunctionLiteral: *FunctionLiteral,
+    CallExpression: *CallExpression,
 
     pub const WriteOption = enum {
         none,
@@ -94,7 +94,7 @@ pub const Node = union(enum) {
 
     pub fn deinit(self: *const Node, allocator: std.mem.Allocator) void {
         switch (self.*) {
-            inline else => |node| @constCast(node).deinit(allocator),
+            inline else => |node| node.deinit(allocator),
         }
     }
 
@@ -119,7 +119,7 @@ pub const Node = union(enum) {
 
 pub const LetStatement = struct {
     token: Token,
-    name: Node,
+    name: *Identifier,
     value: Node = undefined,
 
     pub fn deinit(self: *LetStatement, allocator: std.mem.Allocator) void {
@@ -191,7 +191,7 @@ pub const BlockStatement = struct {
     statements: []const Node,
 
     pub fn deinit(self: *BlockStatement, allocator: std.mem.Allocator) void {
-        for (self.statements) |*statement| {
+        for (self.statements) |statement| {
             statement.deinit(allocator);
         }
         allocator.free(self.statements);
@@ -385,11 +385,11 @@ pub const IfExpression = struct {
 
 pub const FunctionLiteral = struct {
     token: Token,
-    parameters: []const Node,
-    body: Node,
+    parameters: []const *Identifier,
+    body: *BlockStatement,
 
     pub fn deinit(self: *FunctionLiteral, allocator: std.mem.Allocator) void {
-        for (self.parameters) |*parameter| {
+        for (self.parameters) |parameter| {
             parameter.deinit(allocator);
         }
         allocator.free(self.parameters);

@@ -6,59 +6,40 @@ const Object = @import("object.zig");
 
 const Map = std.StringHashMap(Object.Object);
 
-arena: std.mem.Allocator,
 store: Map,
 outer: ?*Environment,
 
-pub fn init(arena: std.mem.Allocator) !*Environment {
-    var environment = try arena.create(Environment);
+pub fn init(allocator: std.mem.Allocator) !*Environment {
+    var environment = try allocator.create(Environment);
     environment.* = .{
-        .arena = arena,
-        .store = Map.init(arena),
+        .store = Map.init(allocator),
         .outer = null,
     };
 
     return environment;
 }
 
-pub fn initEnclosed(arena: std.mem.Allocator, outer: *Environment) !*Environment {
-    var environment = try arena.create(Environment);
-    environment.* = .{
-        .arena = arena,
-        .store = Map.init(arena),
-        .outer = outer,
-    };
-
+pub fn initEnclosed(allocator: std.mem.Allocator, outer: *Environment) !*Environment {
+    var environment = try init(allocator);
+    environment.outer = outer;
     return environment;
 }
 
-pub fn deinit(self: *Environment) void {
+pub fn deinit(self: *Environment, allocator: std.mem.Allocator) void {
     self.store.deinit();
-    self.arena.destroy(self);
+    allocator.destroy(self);
 }
 
 pub fn get(self: *Environment, name: []const u8) ?*Object.Object {
-    std.log.info("Get name? {s} @ {*}", .{ name, self });
-
     if (self.store.getPtr(name)) |object| {
         return object;
     }
-
     if (self.outer) |outer| {
         return outer.get(name);
     }
-
     return null;
 }
 
 pub fn set(self: *Environment, name: []const u8, value: Object.Object) !void {
-    std.log.info("Set name? {s} @ {*}", .{ name, self });
-
-    var _name = name;
-
-    if (!self.store.contains(name)) {
-        _name = try self.arena.dupe(u8, name);
-    }
-
-    try self.store.put(_name, value);
+    try self.store.put(name, value);
 }

@@ -5,99 +5,120 @@ const Evaluator = @This();
 const Parser = @import("parser.zig");
 const Lexer = @import("lexer.zig");
 const Ast = @import("ast.zig");
-const Object = @import("object.zig");
+const ObjectType = @import("object.zig");
 const Environment = @import("environment.zig");
 
-const NULL = Object.Object{ .Literal = .{ .Null = .{} } };
+const Object = ObjectType.Object;
 
-arena: std.mem.Allocator,
+const NULL = Object{ .Literal = .{ .Null = .{} } };
 
-pub fn init(arena: std.mem.Allocator) Evaluator {
-    return .{
-        .arena = arena,
+allocator: std.mem.Allocator,
+last_error: std.ArrayList(u8),
+
+pub fn init(allocator: std.mem.Allocator) !*Evaluator {
+    var evaluator = try allocator.create(Evaluator);
+    evaluator.* = .{
+        .allocator = allocator,
+        .last_error = try std.ArrayList(u8).initCapacity(allocator, 64),
     };
+    return evaluator;
 }
 
-pub fn eval(self: *Evaluator, node: Ast.Node, environment: *Environment) Object.Object {
+pub fn deinit(self: *Evaluator) void {
+    self.last_error.deinit();
+    self.allocator.destroy(self);
+}
+
+pub fn evalAst(self: *Evaluator, ast: *Ast, environment: *Environment) !Object {
+    return unwrapReturn(try self.evalNodes(ast.nodes, environment));
+}
+
+pub fn evalNodes(self: *Evaluator, nodes: []const Ast.Node, environment: *Environment) !Object {
+    var result = NULL;
+    for (nodes) |node| {
+        result = try self.eval(node, environment);
+        if (result == .ReturnValue or result == .Error) {
+            break;
+        }
+    }
+    return result;
+}
+
+pub fn eval(self: *Evaluator, node: Ast.Node, environment: *Environment) error{OutOfMemory}!Object {
     switch (node) {
-        .Statement => |statement| {
-            switch (statement.*) {
-                .Program => |program| {
-                    return self.evalProgram(program, environment);
-                },
-                .ExpressionStatement => |expr_statement| {
-                    return self.eval(.{ .Expression = expr_statement.expression }, environment);
-                },
-                .ReturnStatement => |return_statement| {
-                    return self.evalReturnStatement(return_statement, environment);
-                },
-                .LetStatement => |let_statement| {
-                    return self.evalLetStatement(let_statement, environment);
-                },
-            }
+        // Statements
+
+        .LetStatement => |let_statement| {
+            return try self.evalLetStatement(let_statement, environment);
         },
-        .Expression => |expression| {
-            switch (expression.*) {
-                .Integer => |integer| {
-                    return .{ .Literal = .{ .Integer = .{ .value = integer.value } } };
-                },
-                .Boolean => |boolean| {
-                    return .{ .Literal = .{ .Boolean = .{ .value = boolean.value } } };
-                },
-                .Identifier => |identifier| {
-                    return self.evalIdentifier(identifier, environment);
-                },
-                .PrefixExpression => |prefix_expr| {
-                    var operand = self.eval(.{ .Expression = prefix_expr.operand }, environment);
-                    return self.evalPrefixExpression(prefix_expr.token, operand);
-                },
-                .InfixExpression => |infix_expr| {
-                    var left_operand = self.eval(.{ .Expression = infix_expr.left_operand }, environment);
-                    var right_operand = self.eval(.{ .Expression = infix_expr.right_operand }, environment);
-                    return self.evalInfixExpression(infix_expr.token, left_operand, right_operand);
-                },
-                .IfExpression => |if_expr| {
-                    return self.evalIfExpression(if_expr, environment);
-                },
-                .FunctionLiteral => |function_literal| {
-                    return .{ .Literal = .{ .Function = .{ .parameters = function_literal.parameters.items, .body = function_literal.body } } };
-                },
-                .CallExpression => |call_expr| {
-                    return self.evalCallExpression(call_expr, environment);
-                },
-            }
+        .ReturnStatement => |return_statement| {
+            return try self.evalReturnStatement(return_statement, environment);
+        },
+        .ExpressionStatement => |expr_statement| {
+            return try self.eval(expr_statement.expression, environment);
+        },
+
+        .BlockStatement => |block_statement| {
+            return try self.evalNodes(block_statement.statements, environment);
+        },
+
+        // Expressions
+
+        .Identifier => |identifier| {
+            return try self.evalIdentifier(identifier, environment);
+        },
+        .Integer => |integer| {
+            return .{ .Literal = .{ .Integer = .{ .value = integer.value } } };
+        },
+        .Boolean => |boolean| {
+            return .{ .Literal = .{ .Boolean = .{ .value = boolean.value } } };
+        },
+
+        .PrefixExpression => |prefix_expr| {
+            return try self.evalPrefixExpression(
+                prefix_expr.token,
+                try self.eval(prefix_expr.operand, environment),
+            );
+        },
+        .InfixExpression => |infix_expr| {
+            return try self.evalInfixExpression(
+                infix_expr.token,
+                try self.eval(infix_expr.left_operand, environment),
+                try self.eval(infix_expr.right_operand, environment),
+            );
+        },
+        .GroupedExpression => |grouped_expr| {
+            return try self.eval(grouped_expr.expression, environment);
+        },
+        .IfExpression => |if_expr| {
+            return try self.evalIfExpression(if_expr, environment);
+        },
+        .FunctionLiteral => |function_literal| {
+            return .{ .Literal = .{ .Function = .{
+                .parameters = function_literal.parameters,
+                .body = function_literal.body,
+                .environment = environment,
+            } } };
+        },
+        .CallExpression => |call_expr| {
+            return try self.evalCallExpression(call_expr, environment);
         },
     }
 
     return NULL;
 }
 
-fn evalStatements(self: *Evaluator, statements: []*Ast.Statement, environment: *Environment) Object.Object {
-    var result = NULL;
-
-    for (statements) |statement| {
-        result = self.eval(.{ .Statement = statement }, environment);
-
-        if (result == .ReturnValue or result == .Error) {
-            break;
-        }
+fn evalLetStatement(self: *Evaluator, let_statement: *const Ast.LetStatement, environment: *Environment) !Object {
+    const result = try self.eval(let_statement.value, environment);
+    if (result == .Error) {
+        return result;
     }
-
+    _ = try environment.set(let_statement.name.value, result);
     return result;
 }
 
-fn evalProgram(self: *Evaluator, program: *Ast.Program, environment: *Environment) Object.Object {
-    var result = self.evalStatements(program.statements.items, environment);
-
-    if (result == .ReturnValue) {
-        return .{ .Literal = result.ReturnValue };
-    }
-
-    return result;
-}
-
-fn evalReturnStatement(self: *Evaluator, return_statement: *Ast.ReturnStatement, environment: *Environment) Object.Object {
-    var result = self.eval(.{ .Expression = return_statement.return_value }, environment);
+fn evalReturnStatement(self: *Evaluator, return_statement: *const Ast.ReturnStatement, environment: *Environment) !Object {
+    var result = try self.eval(return_statement.return_value, environment);
     switch (result) {
         .Literal => |literal| return .{ .ReturnValue = literal },
         .Error => return result,
@@ -105,89 +126,100 @@ fn evalReturnStatement(self: *Evaluator, return_statement: *Ast.ReturnStatement,
     }
 }
 
-fn evalLetStatement(self: *Evaluator, let_statement: *Ast.LetStatement, environment: *Environment) Object.Object {
-    var result = self.eval(.{ .Expression = let_statement.value }, environment);
-
-    if (result == .Error) {
-        return result;
-    }
-
-    _ = environment.set(let_statement.name.value, result) catch unreachable;
-
-    return result;
-}
-
-fn evalIdentifier(self: *Evaluator, identifier: *Ast.Identifier, environment: *Environment) Object.Object {
+fn evalIdentifier(self: *Evaluator, identifier: *const Ast.Identifier, environment: *Environment) !Object {
     if (environment.get(identifier.value)) |object| {
         return object.*;
     }
 
-    return newError(self.arena, "Unknown identifier: '{s}'", .{identifier.value});
+    return try self.evalError("Unknown identifier: '{s}'", .{identifier.value});
 }
 
-fn evalPrefixExpression(self: *Evaluator, operator: Lexer.Token, operand: Object.Object) Object.Object {
+fn evalPrefixExpression(self: *Evaluator, operator: Lexer.Token, operand: Object) !Object {
     switch (operator.type) {
         .Bang => return self.evalBangOperator(operand),
         .Minus => return self.evalNegativeOperator(operand),
-        else => return newError(self.arena, "Invalid prefix operator: {s}", .{@tagName(operator.type)}),
+        else => return try self.evalError("Invalid prefix operator: {s}", .{@tagName(operator.type)}),
     }
 }
 
-fn evalBangOperator(self: *Evaluator, operand: Object.Object) Object.Object {
+fn evalBangOperator(self: *Evaluator, operand: Object) !Object {
     switch (operand) {
         .Literal => |literal| switch (literal) {
             .Integer => |integer| return .{ .Literal = .{ .Boolean = .{ .value = integer.value == 0 } } },
             .Boolean => |boolean| return .{ .Literal = .{ .Boolean = .{ .value = !boolean.value } } },
             .Null => return NULL,
-            else => return newError(self.arena, "Invalid literal '{s}' for operand", .{@tagName(literal)}),
+            else => return try self.evalError("Invalid literal '{s}' for operand", .{@tagName(literal)}),
         },
         .Error => return operand,
-        else => return newError(self.arena, "Invalid type. Expected 'Literal' but found '{s}'", .{@tagName(operand)}),
+        else => return try self.evalError("Invalid type. Expected 'Literal' but found '{s}'", .{@tagName(operand)}),
     }
 }
 
-fn evalNegativeOperator(self: *Evaluator, operand: Object.Object) Object.Object {
+fn evalNegativeOperator(self: *Evaluator, operand: Object) !Object {
     switch (operand) {
         .Literal => |literal| switch (literal) {
             .Integer => |integer| return .{ .Literal = .{ .Integer = .{ .value = -integer.value } } },
             .Null => return NULL,
-            else => return newError(self.arena, "Operand type mismatch. Invalid operation: -'{s}'", .{@tagName(literal)}),
+            else => return try self.evalError("Operand type mismatch. Invalid operation: -'{s}'", .{@tagName(literal)}),
         },
         .Error => return operand,
-        else => return newError(self.arena, "Invalid type. Expected 'Literal' but found '{s}'", .{@tagName(operand)}),
+        else => return try self.evalError("Invalid type. Expected 'Literal' but found '{s}'", .{@tagName(operand)}),
     }
 }
 
-fn evalInfixExpression(self: *Evaluator, operator: Lexer.Token, left_operand: Object.Object, right_operand: Object.Object) Object.Object {
+fn evalInfixExpression(self: *Evaluator, operator: Lexer.Token, left_operand: Object, right_operand: Object) !Object {
     switch (left_operand) {
         .Literal => |left_literal| switch (right_operand) {
             .Literal => |right_literal| switch (left_literal) {
                 .Integer => |left_integer| {
                     switch (right_literal) {
-                        .Integer => |right_integer| return self.evalIntegerInfixExpression(operator, left_integer.value, right_integer.value),
+                        .Integer => |right_integer| return self.evalIntegerInfixExpression(
+                            operator,
+                            left_integer.value,
+                            right_integer.value,
+                        ),
                         .Null => return NULL,
-                        else => return newError(self.arena, "Right operand type mismatch. Invalid operation: 'Integer' {s} '{s}'", .{ operator.literal, @tagName(right_literal) }),
+                        else => return try self.evalError(
+                            "Right operand type mismatch. Invalid operation: 'Integer' {s} '{s}'",
+                            .{ operator.literal, @tagName(right_literal) },
+                        ),
                     }
                 },
                 .Boolean => |left_boolean| {
                     switch (right_literal) {
-                        .Boolean => |right_boolean| return self.evalBooleanInfixExpression(operator, left_boolean.value, right_boolean.value),
+                        .Boolean => |right_boolean| return self.evalBooleanInfixExpression(
+                            operator,
+                            left_boolean.value,
+                            right_boolean.value,
+                        ),
                         .Null => return NULL,
-                        else => return newError(self.arena, "Right operand type mismatch. Invalid operation: 'Boolean' {s} '{s}'", .{ operator.literal, @tagName(right_literal) }),
+                        else => return try self.evalError(
+                            "Right operand type mismatch. Invalid operation: 'Boolean' {s} '{s}'",
+                            .{ operator.literal, @tagName(right_literal) },
+                        ),
                     }
                 },
                 .Null => return NULL,
-                else => return newError(self.arena, "Invalid literal '{s}' for left operand", .{@tagName(left_literal)}),
+                else => return try self.evalError(
+                    "Invalid literal '{s}' for left operand",
+                    .{@tagName(left_literal)},
+                ),
             },
             .Error => return right_operand,
-            else => return newError(self.arena, "Right operand type mismatch. Expected 'Literal' but found '{s}'", .{@tagName(right_operand)}),
+            else => return try self.evalError(
+                "Right operand type mismatch. Expected 'Literal' but found '{s}'",
+                .{@tagName(right_operand)},
+            ),
         },
         .Error => return left_operand,
-        else => return newError(self.arena, "Right operand type mismatch. Expected 'Literal' but found '{s}'", .{@tagName(left_operand)}),
+        else => return try self.evalError(
+            "Right operand type mismatch. Expected 'Literal' but found '{s}'",
+            .{@tagName(left_operand)},
+        ),
     }
 }
 
-fn evalIntegerInfixExpression(self: *Evaluator, operator: Lexer.Token, left_operand: i64, right_operand: i64) Object.Object {
+fn evalIntegerInfixExpression(self: *Evaluator, operator: Lexer.Token, left_operand: i64, right_operand: i64) !Object {
     switch (operator.type) {
         .Plus => return .{ .Literal = .{ .Integer = .{ .value = left_operand + right_operand } } },
         .Minus => return .{ .Literal = .{ .Integer = .{ .value = left_operand - right_operand } } },
@@ -197,70 +229,71 @@ fn evalIntegerInfixExpression(self: *Evaluator, operator: Lexer.Token, left_oper
         .NotEqual => return .{ .Literal = .{ .Boolean = .{ .value = left_operand != right_operand } } },
         .LessThan => return .{ .Literal = .{ .Boolean = .{ .value = left_operand < right_operand } } },
         .GreaterThan => return .{ .Literal = .{ .Boolean = .{ .value = left_operand > right_operand } } },
-        else => return newError(self.arena, "Invalid operation: 'Integer' {s} 'Integer'", .{operator.literal}),
+        else => return try self.evalError("Invalid operation: 'Integer' {s} 'Integer'", .{operator.literal}),
     }
 }
 
-fn evalBooleanInfixExpression(self: *Evaluator, operator: Lexer.Token, left_operand: bool, right_operand: bool) Object.Object {
+fn evalBooleanInfixExpression(self: *Evaluator, operator: Lexer.Token, left_operand: bool, right_operand: bool) !Object {
     switch (operator.type) {
         .Equal => return .{ .Literal = .{ .Boolean = .{ .value = left_operand == right_operand } } },
         .NotEqual => return .{ .Literal = .{ .Boolean = .{ .value = left_operand != right_operand } } },
-        else => return newError(self.arena, "Invalid operation: 'Boolean' {s} 'Boolean'", .{operator.literal}),
+        else => return try self.evalError("Invalid operation: 'Boolean' {s} 'Boolean'", .{operator.literal}),
     }
 }
 
-fn evalIfExpression(self: *Evaluator, if_expr: *Ast.IfExpression, environment: *Environment) Object.Object {
-    var condition = self.eval(.{ .Expression = if_expr.condition }, environment);
-
+fn evalIfExpression(self: *Evaluator, if_expr: *const Ast.IfExpression, environment: *Environment) !Object {
+    const condition = try self.eval(if_expr.condition, environment);
     if (condition == .Error) {
         return condition;
     }
 
     if (isTruthy(condition)) {
-        return self.evalStatements(if_expr.consequence.statements.items, environment);
+        return try self.eval(if_expr.consequence, environment);
     } else if (if_expr.alternative) |alternative| {
-        return self.evalStatements(alternative.statements.items, environment);
+        return try self.eval(alternative, environment);
     }
 
     return NULL;
 }
 
-fn evalCallExpression(self: *Evaluator, call_expr: *Ast.CallExpression, environment: *Environment) Object.Object {
-    var function = blk: {
-        var function = self.eval(.{ .Expression = call_expr.function }, environment);
-
+fn evalCallExpression(self: *Evaluator, call_expr: *const Ast.CallExpression, environment: *Environment) !Object {
+    const function = blk: {
+        const function = try self.eval(call_expr.function, environment);
         if (function == .Error) {
             return function;
         }
 
+        std.debug.assert(function != .ReturnValue);
+
+        if (function.Literal != .Function) {
+            return self.evalError(
+                "Call expression type mismatch. Expected 'Function' but found '{s}'",
+                .{@tagName(function.Literal)},
+            );
+        }
+
+        break :blk function.Literal.Function;
     };
 
-    var args = self.arena.alloc(Object.Object, call_expr.arguments.items.len) catch unreachable;
-    defer self.arena.free(args);
+    std.debug.assert(call_expr.arguments.len == function.parameters.len);
 
-    for (call_expr.arguments.items, args) |arg_expr, *arg| {
-        arg.* = self.eval(.{ .Expression = arg_expr }, environment);
+    var enclosed_env = try Environment.initEnclosed(self.allocator, function.environment);
+    defer enclosed_env.deinit(self.allocator);
 
-        if (arg.* == .Error) {
-            return arg.*;
+    try enclosed_env.store.ensureTotalCapacity(@intCast(function.parameters.len));
+
+    for (function.parameters, call_expr.arguments) |param, arg| {
+        const result = try self.eval(arg, environment);
+        if (result == .Error) {
+            return result;
         }
+        try enclosed_env.set(param.value, result);
     }
 
-    var arena = std.heap.ArenaAllocator.init(self.arena);
-    defer arena.deinit();
-
-    var allocator = arena.allocator();
-
-    var encolsed_env = Environment.initEnclosed(allocator, environment);
-    defer encolsed_env.deinit();
-
-    for (function.pa) |arg| {
-    }
-
-    return NULL;
+    return unwrapReturn(try self.eval(.{ .BlockStatement = function.body }, enclosed_env));
 }
 
-fn isTruthy(object: Object.Object) bool {
+fn isTruthy(object: Object) bool {
     switch (object) {
         .Literal => |literal| switch (literal) {
             .Integer => |integer| return integer.value != 0,
@@ -271,254 +304,167 @@ fn isTruthy(object: Object.Object) bool {
     }
 }
 
-fn newError(arena: std.mem.Allocator, comptime message: []const u8, args: anytype) Object.Object {
-    var buffer = std.ArrayList(u8).initCapacity(arena, message.len) catch unreachable;
-    var writer = buffer.writer();
-    std.fmt.format(writer, message, args) catch unreachable;
-    return .{ .Error = .{ .value = buffer.toOwnedSlice() catch unreachable } };
+fn evalError(self: *Evaluator, comptime message: []const u8, args: anytype) !Object {
+    self.last_error.shrinkRetainingCapacity(0);
+    try self.last_error.writer().print(message, args);
+    return .{ .Error = .{ .value = self.last_error.items } };
 }
 
+fn unwrapReturn(value: Object) Object {
+    return switch (value) {
+        .ReturnValue => |return_value| .{ .Literal = return_value },
+        else => value,
+    };
+}
+
+const TestInput = struct {
+    input: []const u8,
+    expected: Object,
+};
+
 test "Eval Integer Expression" {
-    const Input = struct { input: []const u8, expected: i64 };
-    const input = [_]Input{
-        .{ .input = "5", .expected = 5 },
-        .{ .input = "10", .expected = 10 },
-        .{ .input = "-5", .expected = -5 },
-        .{ .input = "-10", .expected = -10 },
-        .{ .input = "5 + 5 + 5 + 5 - 10", .expected = 10 },
-        .{ .input = "2 * 2 * 2 * 2 * 2", .expected = 32 },
-        .{ .input = "-50 + 100 + -50", .expected = 0 },
-        .{ .input = "5 * 2 + 10", .expected = 20 },
-        .{ .input = "5 + 2 * 10", .expected = 25 },
-        .{ .input = "20 + 2 * -10", .expected = 0 },
-        .{ .input = "50 / 2 * 2 + 10", .expected = 60 },
-        .{ .input = "2 * (5 + 10)", .expected = 30 },
-        .{ .input = "3 * 3 * 3 + 10", .expected = 37 },
-        .{ .input = "3 * (3 * 3) + 10", .expected = 37 },
-        .{ .input = "(5 + 10 * 2 + 15 / 3) * 2 + -10", .expected = 50 },
+    const input = [_]TestInput{
+        .{ .input = "5", .expected = .{ .Literal = .{ .Integer = .{ .value = 5 } } } },
+        .{ .input = "10", .expected = .{ .Literal = .{ .Integer = .{ .value = 10 } } } },
+        .{ .input = "-5", .expected = .{ .Literal = .{ .Integer = .{ .value = -5 } } } },
+        .{ .input = "-10", .expected = .{ .Literal = .{ .Integer = .{ .value = -10 } } } },
+        .{ .input = "5 + 5 + 5 + 5 - 10", .expected = .{ .Literal = .{ .Integer = .{ .value = 10 } } } },
+        .{ .input = "2 * 2 * 2 * 2 * 2", .expected = .{ .Literal = .{ .Integer = .{ .value = 32 } } } },
+        .{ .input = "-50 + 100 + -50", .expected = .{ .Literal = .{ .Integer = .{ .value = 0 } } } },
+        .{ .input = "5 * 2 + 10", .expected = .{ .Literal = .{ .Integer = .{ .value = 20 } } } },
+        .{ .input = "5 + 2 * 10", .expected = .{ .Literal = .{ .Integer = .{ .value = 25 } } } },
+        .{ .input = "20 + 2 * -10", .expected = .{ .Literal = .{ .Integer = .{ .value = 0 } } } },
+        .{ .input = "50 / 2 * 2 + 10", .expected = .{ .Literal = .{ .Integer = .{ .value = 60 } } } },
+        .{ .input = "2 * (5 + 10)", .expected = .{ .Literal = .{ .Integer = .{ .value = 30 } } } },
+        .{ .input = "3 * 3 * 3 + 10", .expected = .{ .Literal = .{ .Integer = .{ .value = 37 } } } },
+        .{ .input = "3 * (3 * 3) + 10", .expected = .{ .Literal = .{ .Integer = .{ .value = 37 } } } },
+        .{ .input = "(5 + 10 * 2 + 15 / 3) * 2 + -10", .expected = .{ .Literal = .{ .Integer = .{ .value = 50 } } } },
     };
 
+    var allocator = std.testing.allocator;
+    var evaluator = try Evaluator.init(allocator);
+    defer evaluator.deinit();
+
     for (input) |test_input| {
-        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-        defer arena.deinit();
+        var ast = try Ast.parse(allocator, test_input.input);
+        defer ast.deinit(allocator);
 
-        var allocator = arena.allocator();
+        try testAst(&ast);
 
-        var lexer = Lexer.init(test_input.input);
+        var environment = try Environment.init(allocator);
+        defer environment.deinit(allocator);
 
-        var parser = try Parser.init(&lexer, allocator);
-        defer parser.deinit();
-
-        var program = try parser.parseProgram(allocator);
-        defer program.deinit();
-
-        var statement = Ast.Statement{ .Program = program };
-        var node = Ast.Node{ .Statement = &statement };
-
-        if (parser.errors.items.len > 0) {
-            std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
-            for (parser.errors.items) |message| {
-                std.debug.print("- {s}\n", .{message});
-            }
-            try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
-        }
-
-        var environment = Environment.init(allocator);
-        defer environment.deinit();
-
-        var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, &environment);
-
-        switch (object) {
-            .Literal => |literal| switch (literal) {
-                .Integer => |integer| try std.testing.expectEqual(test_input.expected, integer.value),
-                else => unreachable,
-            },
-            else => unreachable,
-        }
+        var result = try evaluator.evalAst(&ast, environment);
+        try expectEqualObjects(test_input.expected, result);
     }
 }
 
 test "Eval Boolean Expression" {
-    const Input = struct { input: []const u8, expected: bool };
-    const input = [_]Input{
-        .{ .input = "true", .expected = true },
-        .{ .input = "false", .expected = false },
-        .{ .input = "true", .expected = true },
-        .{ .input = "false", .expected = false },
-        .{ .input = "1 < 2", .expected = true },
-        .{ .input = "1 > 2", .expected = false },
-        .{ .input = "1 < 1", .expected = false },
-        .{ .input = "1 > 1", .expected = false },
-        .{ .input = "1 == 1", .expected = true },
-        .{ .input = "1 != 1", .expected = false },
-        .{ .input = "1 == 2", .expected = false },
-        .{ .input = "1 != 2", .expected = true },
-        .{ .input = "true == true", .expected = true },
-        .{ .input = "false == false", .expected = true },
-        .{ .input = "true == false", .expected = false },
-        .{ .input = "true != false", .expected = true },
-        .{ .input = "false != true", .expected = true },
-        .{ .input = "(1 < 2) == true", .expected = true },
-        .{ .input = "(1 < 2) == false", .expected = false },
-        .{ .input = "(1 > 2) == true", .expected = false },
-        .{ .input = "(1 > 2) == false", .expected = true },
+    const input = [_]TestInput{
+        .{ .input = "true", .expected = .{ .Literal = .{ .Boolean = .{ .value = true } } } },
+        .{ .input = "false", .expected = .{ .Literal = .{ .Boolean = .{ .value = false } } } },
+        .{ .input = "true", .expected = .{ .Literal = .{ .Boolean = .{ .value = true } } } },
+        .{ .input = "false", .expected = .{ .Literal = .{ .Boolean = .{ .value = false } } } },
+        .{ .input = "1 < 2", .expected = .{ .Literal = .{ .Boolean = .{ .value = true } } } },
+        .{ .input = "1 > 2", .expected = .{ .Literal = .{ .Boolean = .{ .value = false } } } },
+        .{ .input = "1 < 1", .expected = .{ .Literal = .{ .Boolean = .{ .value = false } } } },
+        .{ .input = "1 > 1", .expected = .{ .Literal = .{ .Boolean = .{ .value = false } } } },
+        .{ .input = "1 == 1", .expected = .{ .Literal = .{ .Boolean = .{ .value = true } } } },
+        .{ .input = "1 != 1", .expected = .{ .Literal = .{ .Boolean = .{ .value = false } } } },
+        .{ .input = "1 == 2", .expected = .{ .Literal = .{ .Boolean = .{ .value = false } } } },
+        .{ .input = "1 != 2", .expected = .{ .Literal = .{ .Boolean = .{ .value = true } } } },
+        .{ .input = "true == true", .expected = .{ .Literal = .{ .Boolean = .{ .value = true } } } },
+        .{ .input = "false == false", .expected = .{ .Literal = .{ .Boolean = .{ .value = true } } } },
+        .{ .input = "true == false", .expected = .{ .Literal = .{ .Boolean = .{ .value = false } } } },
+        .{ .input = "true != false", .expected = .{ .Literal = .{ .Boolean = .{ .value = true } } } },
+        .{ .input = "false != true", .expected = .{ .Literal = .{ .Boolean = .{ .value = true } } } },
+        .{ .input = "(1 < 2) == true", .expected = .{ .Literal = .{ .Boolean = .{ .value = true } } } },
+        .{ .input = "(1 < 2) == false", .expected = .{ .Literal = .{ .Boolean = .{ .value = false } } } },
+        .{ .input = "(1 > 2) == true", .expected = .{ .Literal = .{ .Boolean = .{ .value = false } } } },
+        .{ .input = "(1 > 2) == false", .expected = .{ .Literal = .{ .Boolean = .{ .value = true } } } },
     };
 
+    var allocator = std.testing.allocator;
+    var evaluator = try Evaluator.init(allocator);
+    defer evaluator.deinit();
+
     for (input) |test_input| {
-        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-        defer arena.deinit();
+        var ast = try Ast.parse(allocator, test_input.input);
+        defer ast.deinit(allocator);
 
-        var allocator = arena.allocator();
+        try testAst(&ast);
 
-        var lexer = Lexer.init(test_input.input);
+        var environment = try Environment.init(allocator);
+        defer environment.deinit(allocator);
 
-        var parser = try Parser.init(&lexer, allocator);
-        defer parser.deinit();
-
-        var program = try parser.parseProgram(allocator);
-        defer program.deinit();
-
-        var statement = Ast.Statement{ .Program = program };
-        var node = Ast.Node{ .Statement = &statement };
-
-        if (parser.errors.items.len > 0) {
-            std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
-            for (parser.errors.items) |message| {
-                std.debug.print("- {s}\n", .{message});
-            }
-            try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
-        }
-
-        var environment = Environment.init(allocator);
-        defer environment.deinit();
-
-        var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, &environment);
-
-        switch (object) {
-            .Literal => |literal| switch (literal) {
-                .Boolean => |boolean| try std.testing.expectEqual(test_input.expected, boolean.value),
-                else => unreachable,
-            },
-            else => unreachable,
-        }
+        var result = try evaluator.evalAst(&ast, environment);
+        try expectEqualObjects(test_input.expected, result);
     }
 }
 
 test "Eval Bang Operator" {
-    const Input = struct { input: []const u8, expected: bool };
-    const input = [_]Input{
-        .{ .input = "!true", .expected = false },
-        .{ .input = "!false", .expected = true },
-        .{ .input = "!5", .expected = false },
-        .{ .input = "!!true", .expected = true },
-        .{ .input = "!!false", .expected = false },
-        .{ .input = "!!5", .expected = true },
+    const input = [_]TestInput{
+        .{ .input = "!true", .expected = .{ .Literal = .{ .Boolean = .{ .value = false } } } },
+        .{ .input = "!false", .expected = .{ .Literal = .{ .Boolean = .{ .value = true } } } },
+        .{ .input = "!5", .expected = .{ .Literal = .{ .Boolean = .{ .value = false } } } },
+        .{ .input = "!!true", .expected = .{ .Literal = .{ .Boolean = .{ .value = true } } } },
+        .{ .input = "!!false", .expected = .{ .Literal = .{ .Boolean = .{ .value = false } } } },
+        .{ .input = "!!5", .expected = .{ .Literal = .{ .Boolean = .{ .value = true } } } },
     };
 
+    var allocator = std.testing.allocator;
+    var evaluator = try Evaluator.init(allocator);
+    defer evaluator.deinit();
+
     for (input) |test_input| {
-        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-        defer arena.deinit();
+        var ast = try Ast.parse(allocator, test_input.input);
+        defer ast.deinit(allocator);
 
-        var allocator = arena.allocator();
+        try testAst(&ast);
 
-        var lexer = Lexer.init(test_input.input);
+        var environment = try Environment.init(allocator);
+        defer environment.deinit(allocator);
 
-        var parser = try Parser.init(&lexer, allocator);
-        defer parser.deinit();
-
-        var program = try parser.parseProgram(allocator);
-        defer program.deinit();
-
-        var statement = Ast.Statement{ .Program = program };
-        var node = Ast.Node{ .Statement = &statement };
-
-        if (parser.errors.items.len > 0) {
-            std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
-            for (parser.errors.items) |message| {
-                std.debug.print("- {s}\n", .{message});
-            }
-            try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
-        }
-
-        var environment = Environment.init(allocator);
-        defer environment.deinit();
-
-        var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, &environment);
-
-        switch (object) {
-            .Literal => |literal| switch (literal) {
-                .Boolean => |boolean| try std.testing.expectEqual(test_input.expected, boolean.value),
-                else => unreachable,
-            },
-            else => unreachable,
-        }
+        var result = try evaluator.evalAst(&ast, environment);
+        try expectEqualObjects(test_input.expected, result);
     }
 }
 
 test "Eval If Else Expression" {
-    const Input = struct { input: []const u8, expected: ?i64 };
-    const input = [_]Input{
-        .{ .input = "if (true) { 10 }", .expected = 10 },
-        .{ .input = "if (false) { 10 }", .expected = null },
-        .{ .input = "if (1) { 10 }", .expected = 10 },
-        .{ .input = "if (1 < 2) { 10 }", .expected = 10 },
-        .{ .input = "if (1 > 2) { 10 }", .expected = null },
-        .{ .input = "if (1 > 2) { 10 } else { 20 }", .expected = 20 },
-        .{ .input = "if (1 < 2) { 10 } else { 20 }", .expected = 10 },
+    const input = [_]TestInput{
+        .{ .input = "if (true) { 10 }", .expected = .{ .Literal = .{ .Integer = .{ .value = 10 } } } },
+        .{ .input = "if (false) { 10 }", .expected = .{ .Literal = .{ .Null = .{} } } },
+        .{ .input = "if (1) { 10 }", .expected = .{ .Literal = .{ .Integer = .{ .value = 10 } } } },
+        .{ .input = "if (1 < 2) { 10 }", .expected = .{ .Literal = .{ .Integer = .{ .value = 10 } } } },
+        .{ .input = "if (1 > 2) { 10 }", .expected = .{ .Literal = .{ .Null = .{} } } },
+        .{ .input = "if (1 > 2) { 10 } else { 20 }", .expected = .{ .Literal = .{ .Integer = .{ .value = 20 } } } },
+        .{ .input = "if (1 < 2) { 10 } else { 20 }", .expected = .{ .Literal = .{ .Integer = .{ .value = 10 } } } },
     };
 
+    var allocator = std.testing.allocator;
+    var evaluator = try Evaluator.init(allocator);
+    defer evaluator.deinit();
+
     for (input) |test_input| {
-        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-        defer arena.deinit();
+        var ast = try Ast.parse(allocator, test_input.input);
+        defer ast.deinit(allocator);
 
-        var allocator = arena.allocator();
+        try testAst(&ast);
 
-        var lexer = Lexer.init(test_input.input);
+        var environment = try Environment.init(allocator);
+        defer environment.deinit(allocator);
 
-        var parser = try Parser.init(&lexer, allocator);
-        defer parser.deinit();
-
-        var program = try parser.parseProgram(allocator);
-        defer program.deinit();
-
-        var statement = Ast.Statement{ .Program = program };
-        var node = Ast.Node{ .Statement = &statement };
-
-        if (parser.errors.items.len > 0) {
-            std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
-            for (parser.errors.items) |message| {
-                std.debug.print("- {s}\n", .{message});
-            }
-            try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
-        }
-
-        var environment = Environment.init(allocator);
-        defer environment.deinit();
-
-        var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, &environment);
-
-        switch (object) {
-            .Literal => |literal| switch (literal) {
-                .Integer => |integer| try std.testing.expectEqual(test_input.expected, integer.value),
-                .Null => try std.testing.expectEqual(@as(@TypeOf(test_input.expected), null), test_input.expected),
-                else => unreachable,
-            },
-            else => unreachable,
-        }
+        var result = try evaluator.evalAst(&ast, environment);
+        try expectEqualObjects(test_input.expected, result);
     }
 }
 
 test "Eval Return Statement" {
-    const Input = struct { input: []const u8, expected: ?i64 };
-    const input = [_]Input{
-        .{ .input = "return 10;", .expected = 10 },
-        .{ .input = "return 10; 9;", .expected = 10 },
-        .{ .input = "return 2 * 5; 9;", .expected = 10 },
-        .{ .input = "9; return 2 * 5; 9;", .expected = 10 },
+    const input = [_]TestInput{
+        .{ .input = "return 10;", .expected = .{ .Literal = .{ .Integer = .{ .value = 10 } } } },
+        .{ .input = "return 10; 9;", .expected = .{ .Literal = .{ .Integer = .{ .value = 10 } } } },
+        .{ .input = "return 2 * 5; 9;", .expected = .{ .Literal = .{ .Integer = .{ .value = 10 } } } },
+        .{ .input = "9; return 2 * 5; 9;", .expected = .{ .Literal = .{ .Integer = .{ .value = 10 } } } },
         .{
             .input =
             \\if (10 > 1) {
@@ -528,60 +474,36 @@ test "Eval Return Statement" {
             \\    return 1;
             \\}
             ,
-            .expected = 10,
+            .expected = .{ .Literal = .{ .Integer = .{ .value = 10 } } },
         },
     };
 
+    var allocator = std.testing.allocator;
+    var evaluator = try Evaluator.init(allocator);
+    defer evaluator.deinit();
+
     for (input) |test_input| {
-        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-        defer arena.deinit();
+        var ast = try Ast.parse(allocator, test_input.input);
+        defer ast.deinit(allocator);
 
-        var allocator = arena.allocator();
+        try testAst(&ast);
 
-        var lexer = Lexer.init(test_input.input);
+        var environment = try Environment.init(allocator);
+        defer environment.deinit(allocator);
 
-        var parser = try Parser.init(&lexer, allocator);
-        defer parser.deinit();
-
-        var program = try parser.parseProgram(allocator);
-        defer program.deinit();
-
-        var statement = Ast.Statement{ .Program = program };
-        var node = Ast.Node{ .Statement = &statement };
-
-        if (parser.errors.items.len > 0) {
-            std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
-            for (parser.errors.items) |message| {
-                std.debug.print("- {s}\n", .{message});
-            }
-            try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
-        }
-
-        var environment = Environment.init(allocator);
-        defer environment.deinit();
-
-        var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, &environment);
-
-        switch (object) {
-            .Literal => |literal| switch (literal) {
-                .Integer => |integer| try std.testing.expectEqual(test_input.expected, integer.value),
-                else => unreachable,
-            },
-            else => unreachable,
-        }
+        var result = try evaluator.evalAst(&ast, environment);
+        try expectEqualObjects(test_input.expected, result);
     }
 }
 
 test "Eval Error Handling" {
-    const Input = struct { input: []const u8, expected: []const u8 };
-    const input = [_]Input{
-        .{ .input = "5 + true;", .expected = "Right operand type mismatch. Invalid operation: 'Integer' + 'Boolean'" },
-        .{ .input = "5 + true; 5;", .expected = "Right operand type mismatch. Invalid operation: 'Integer' + 'Boolean'" },
-        .{ .input = "-true", .expected = "Operand type mismatch. Invalid operation: -'Boolean'" },
-        .{ .input = "true + false;", .expected = "Invalid operation: 'Boolean' + 'Boolean'" },
-        .{ .input = "5; true + false; 5", .expected = "Invalid operation: 'Boolean' + 'Boolean'" },
-        .{ .input = "if (10 > 1) { true + false; }", .expected = "Invalid operation: 'Boolean' + 'Boolean'" },
+    const input = [_]TestInput{
+        .{ .input = "5 + true;", .expected = .{ .Error = .{ .value = "Right operand type mismatch. Invalid operation: 'Integer' + 'Boolean'" } } },
+        .{ .input = "5 + true; 5;", .expected = .{ .Error = .{ .value = "Right operand type mismatch. Invalid operation: 'Integer' + 'Boolean'" } } },
+        .{ .input = "-true", .expected = .{ .Error = .{ .value = "Operand type mismatch. Invalid operation: -'Boolean'" } } },
+        .{ .input = "true + false;", .expected = .{ .Error = .{ .value = "Invalid operation: 'Boolean' + 'Boolean'" } } },
+        .{ .input = "5; true + false; 5", .expected = .{ .Error = .{ .value = "Invalid operation: 'Boolean' + 'Boolean'" } } },
+        .{ .input = "if (10 > 1) { true + false; }", .expected = .{ .Error = .{ .value = "Invalid operation: 'Boolean' + 'Boolean'" } } },
         .{
             .input =
             \\if (10 > 1) {
@@ -590,211 +512,143 @@ test "Eval Error Handling" {
             \\    } return 1;
             \\}
             ,
-            .expected = "Invalid operation: 'Boolean' + 'Boolean'",
+            .expected = .{ .Error = .{ .value = "Invalid operation: 'Boolean' + 'Boolean'" } },
         },
-        .{ .input = "foobar", .expected = "Unknown identifier: 'foobar'" },
+        .{ .input = "foobar", .expected = .{ .Error = .{ .value = "Unknown identifier: 'foobar'" } } },
     };
 
+    var allocator = std.testing.allocator;
+    var evaluator = try Evaluator.init(allocator);
+    defer evaluator.deinit();
+
     for (input) |test_input| {
-        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-        defer arena.deinit();
+        var ast = try Ast.parse(allocator, test_input.input);
+        defer ast.deinit(allocator);
 
-        var allocator = arena.allocator();
+        try testAst(&ast);
 
-        var lexer = Lexer.init(test_input.input);
+        var environment = try Environment.init(allocator);
+        defer environment.deinit(allocator);
 
-        var parser = try Parser.init(&lexer, allocator);
-        defer parser.deinit();
-
-        var program = try parser.parseProgram(allocator);
-        defer program.deinit();
-
-        var statement = Ast.Statement{ .Program = program };
-        var node = Ast.Node{ .Statement = &statement };
-
-        if (parser.errors.items.len > 0) {
-            std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
-            for (parser.errors.items) |message| {
-                std.debug.print("- {s}\n", .{message});
-            }
-            try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
-        }
-
-        var environment = Environment.init(allocator);
-        defer environment.deinit();
-
-        var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, &environment);
-
-        switch (object) {
-            .Error => |err| try std.testing.expectEqualStrings(test_input.expected, err.value),
-            else => unreachable,
-        }
+        var result = try evaluator.evalAst(&ast, environment);
+        try expectEqualObjects(test_input.expected, result);
     }
 }
 
 test "Eval Let Statement" {
-    const Input = struct { input: []const u8, expected: i64 };
-    const input = [_]Input{
-        .{ .input = "let a = 5; a;", .expected = 5 },
-        .{ .input = "let a = 5 * 5; a;", .expected = 25 },
-        .{ .input = "let a = 5; let b = a; b;", .expected = 5 },
-        .{ .input = "let a = 5; let b = a; let c = a + b + 5; c;", .expected = 15 },
+    const input = [_]TestInput{
+        .{ .input = "let a = 5; a;", .expected = .{ .Literal = .{ .Integer = .{ .value = 5 } } } },
+        .{ .input = "let a = 5 * 5; a;", .expected = .{ .Literal = .{ .Integer = .{ .value = 25 } } } },
+        .{ .input = "let a = 5; let b = a; b;", .expected = .{ .Literal = .{ .Integer = .{ .value = 5 } } } },
+        .{ .input = "let a = 5; let b = a; let c = a + b + 5; c;", .expected = .{ .Literal = .{ .Integer = .{ .value = 15 } } } },
     };
 
+    var allocator = std.testing.allocator;
+    var evaluator = try Evaluator.init(allocator);
+    defer evaluator.deinit();
+
     for (input) |test_input| {
-        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-        defer arena.deinit();
+        var ast = try Ast.parse(allocator, test_input.input);
+        defer ast.deinit(allocator);
 
-        var allocator = arena.allocator();
+        try testAst(&ast);
 
-        var lexer = Lexer.init(test_input.input);
+        var environment = try Environment.init(allocator);
+        defer environment.deinit(allocator);
 
-        var parser = try Parser.init(&lexer, allocator);
-        defer parser.deinit();
-
-        var program = try parser.parseProgram(allocator);
-        defer program.deinit();
-
-        var statement = Ast.Statement{ .Program = program };
-        var node = Ast.Node{ .Statement = &statement };
-
-        if (parser.errors.items.len > 0) {
-            std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
-            for (parser.errors.items) |message| {
-                std.debug.print("- {s}\n", .{message});
-            }
-            try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
-        }
-
-        var environment = Environment.init(allocator);
-        defer environment.deinit();
-
-        var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, &environment);
-
-        switch (object) {
-            .Literal => |literal| switch (literal) {
-                .Integer => |integer| try std.testing.expectEqual(test_input.expected, integer.value),
-                else => unreachable,
-            },
-            else => unreachable,
-        }
+        var result = try evaluator.evalAst(&ast, environment);
+        try expectEqualObjects(test_input.expected, result);
     }
 }
 
 test "Eval Function Literal" {
-    var sigh = [_][]const u8{"x"};
+    const input = "fn(x) { x + 2; }";
 
-    const Input = struct { input: []const u8, expected: struct { parameters: [][]const u8, body: []const u8 } };
-    const input = [_]Input{
-        .{ .input = "fn(x) { x + 2; };", .expected = .{ .parameters = &sigh, .body = "{\n(x + 2);\n}\n" } },
-    };
+    var allocator = std.testing.allocator;
+    var ast = try Ast.parse(allocator, input);
+    defer ast.deinit(allocator);
 
-    for (input) |test_input| {
-        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-        defer arena.deinit();
+    try testAst(&ast);
 
-        var allocator = arena.allocator();
+    var evaluator = try Evaluator.init(allocator);
+    defer evaluator.deinit();
 
-        var lexer = Lexer.init(test_input.input);
+    var environment = try Environment.init(allocator);
+    defer environment.deinit(allocator);
 
-        var parser = try Parser.init(&lexer, allocator);
-        defer parser.deinit();
+    const function = ast.nodes[0].ExpressionStatement.expression.FunctionLiteral;
+    const expected = Object{ .Literal = .{ .Function = .{
+        .parameters = function.parameters,
+        .body = function.body,
+        .environment = environment,
+    } } };
 
-        var program = try parser.parseProgram(allocator);
-        defer program.deinit();
-
-        var statement = Ast.Statement{ .Program = program };
-        var node = Ast.Node{ .Statement = &statement };
-
-        if (parser.errors.items.len > 0) {
-            std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
-            for (parser.errors.items) |message| {
-                std.debug.print("- {s}\n", .{message});
-            }
-            try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
-        }
-
-        var environment = Environment.init(allocator);
-        defer environment.deinit();
-
-        var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, &environment);
-
-        switch (object) {
-            .Literal => |literal| switch (literal) {
-                .Function => |function| {
-                    try std.testing.expectEqual(test_input.expected.parameters.len, function.parameters.len);
-
-                    for (test_input.expected.parameters, function.parameters) |expected_param, input_param| {
-                        try std.testing.expectEqualStrings(expected_param, input_param.value);
-                    }
-
-                    var input_body = try std.ArrayList(u8).initCapacity(std.testing.allocator, test_input.expected.body.len);
-                    defer input_body.deinit();
-
-                    var writer = input_body.writer();
-
-                    function.body.write(writer);
-
-                    try std.testing.expectEqualStrings(test_input.expected.body, input_body.items);
-                },
-                else => unreachable,
-            },
-            else => unreachable,
-        }
-    }
+    var result = try evaluator.evalAst(&ast, environment);
+    try expectEqualObjects(expected, result);
 }
 
 test "Eval Call Expression" {
-    const Input = struct { input: []const u8, expected: i64 };
-    const input = [_]Input{
-        .{ .input = "let identity = fn(x) { x; }; identity(5);", .expected = 5 },
-        .{ .input = "let identity = fn(x) { return x; }; identity(5);", .expected = 5 },
-        .{ .input = "let double = fn(x) { x * 2; }; double(5);", .expected = 0 },
-        .{ .input = "let add = fn(x, y) { x + y; }; add(5, 5);", .expected = 0 },
-        .{ .input = "let add = fn(x, y) { x + y; }; add(5 + 5, add(5, 5));", .expected = 0 },
-        .{ .input = "fn(x) { x; }(5)", .expected = 5 },
+    const input = [_]TestInput{
+        .{ .input = "let identity = fn(x) { x; }; identity(5);", .expected = .{ .Literal = .{ .Integer = .{ .value = 5 } } } },
+        .{ .input = "let identity = fn(x) { return x; }; identity(5);", .expected = .{ .Literal = .{ .Integer = .{ .value = 5 } } } },
+        .{ .input = "let double = fn(x) { x * 2; }; double(5);", .expected = .{ .Literal = .{ .Integer = .{ .value = 10 } } } },
+        .{ .input = "let add = fn(x, y) { x + y; }; add(5, 5);", .expected = .{ .Literal = .{ .Integer = .{ .value = 10 } } } },
+        .{ .input = "let add = fn(x, y) { x + y; }; add(5 + 5, add(5, 5));", .expected = .{ .Literal = .{ .Integer = .{ .value = 20 } } } },
+        .{ .input = "fn(x) { x; }(5)", .expected = .{ .Literal = .{ .Integer = .{ .value = 5 } } } },
     };
 
+    var allocator = std.testing.allocator;
+    var evaluator = try Evaluator.init(allocator);
+    defer evaluator.deinit();
+
     for (input) |test_input| {
-        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-        defer arena.deinit();
+        var ast = try Ast.parse(allocator, test_input.input);
+        defer ast.deinit(allocator);
 
-        var allocator = arena.allocator();
+        try testAst(&ast);
 
-        var lexer = Lexer.init(test_input.input);
+        var environment = try Environment.init(allocator);
+        defer environment.deinit(allocator);
 
-        var parser = try Parser.init(&lexer, allocator);
-        defer parser.deinit();
-
-        var program = try parser.parseProgram(allocator);
-        defer program.deinit();
-
-        var statement = Ast.Statement{ .Program = program };
-        var node = Ast.Node{ .Statement = &statement };
-
-        if (parser.errors.items.len > 0) {
-            std.debug.print("Parser failed with {d} errors:\n", .{parser.errors.items.len});
-            for (parser.errors.items) |message| {
-                std.debug.print("- {s}\n", .{message});
-            }
-            try std.testing.expectEqual(@as(usize, 0), parser.errors.items.len);
-        }
-
-        var environment = Environment.init(allocator);
-        defer environment.deinit();
-
-        var evaluator = Evaluator.init(allocator);
-        var object = evaluator.eval(node, &environment);
-
-        switch (object) {
-            .Literal => |literal| switch (literal) {
-                .Integer => |integer| try std.testing.expectEqual(test_input.expected, integer.value),
-                else => unreachable,
-            },
-            else => unreachable,
-        }
+        var result = try evaluator.evalAst(&ast, environment);
+        try expectEqualObjects(test_input.expected, result);
     }
+}
+
+fn testAst(ast: *Ast) !void {
+    if (ast.errors.len > 0) {
+        std.debug.print("Parse failed with {d} errors:\n", .{ast.errors.len});
+        for (ast.errors) |err| {
+            std.debug.print("- {s}\n", .{err});
+        }
+        try std.testing.expect(false);
+    }
+}
+
+fn expectEqualObjects(expected: Object, actual: Object) !void {
+    try std.testing.expectEqualStrings(@tagName(expected), @tagName(actual));
+    switch (expected) {
+        .Literal => |literal| try expectEqualLiterals(literal, actual.Literal),
+        .ReturnValue => |return_value| try expectEqualLiterals(return_value, actual.ReturnValue),
+        .Error => |err| try std.testing.expectEqualStrings(err.value, actual.Error.value),
+    }
+}
+
+fn expectEqualLiterals(expected: ObjectType.Literal, actual: ObjectType.Literal) !void {
+    try std.testing.expectEqualStrings(@tagName(expected), @tagName(actual));
+    switch (expected) {
+        .Integer => |integer| try std.testing.expectEqual(integer.value, actual.Integer.value),
+        .Boolean => |boolean| try std.testing.expectEqual(boolean.value, actual.Boolean.value),
+        .Function => |function| try expectEqualFunctions(function, actual.Function),
+        .Null => {},
+    }
+}
+
+fn expectEqualFunctions(expected: ObjectType.Function, actual: ObjectType.Function) !void {
+    try std.testing.expectEqual(expected.parameters.len, actual.parameters.len);
+    for (expected.parameters, actual.parameters) |expected_param, actual_param| {
+        try std.testing.expectEqualStrings(expected_param.value, actual_param.value);
+    }
+    try std.testing.expectEqual(expected.body, actual.body);
+    try std.testing.expectEqual(expected.environment, actual.environment);
 }

@@ -776,124 +776,124 @@ fn testAst(expected_nodes: []const Node, ast: *Ast) !void {
         try std.testing.expect(false);
     }
 
-    try expectEqualNodes(expected_nodes, ast.nodes);
+    try expectEqualNodeSlices(expected_nodes, ast.nodes);
 }
 
-fn expectEqualNodes(expected_nodes: []const Node, actual_nodes: []const Node) !void {
+fn expectEqualNodeSlices(expected_nodes: []const Node, actual_nodes: []const Node) !void {
     try std.testing.expectEqual(expected_nodes.len, actual_nodes.len);
 
     for (expected_nodes, actual_nodes) |expected, actual| {
-        try expectEqualNode(expected, actual);
+        try expectEqualNodes(expected, actual);
     }
 }
 
-fn expectEqualNode(expected: Node, actual: Node) TestError!void {
+fn expectEqualNodes(expected: Node, actual: Node) TestError!void {
     try std.testing.expectEqualStrings(@tagName(expected), @tagName(actual));
     // try std.testing.expectEqual(@intFromEnum(expected), @intFromEnum(actual));
     switch (expected) {
         // Statements
-        .LetStatement => |node| try expectEqualLetStatement(node, actual.LetStatement),
-        .ReturnStatement => |node| try expectEqualReturnStatement(node, actual.ReturnStatement),
-        .ExpressionStatement => |node| try expectEqualExpressionStatement(node, actual.ExpressionStatement),
+        .LetStatement => |node| try expectEqualLetStatements(node, actual.LetStatement),
+        .ReturnStatement => |node| try expectEqualReturnStatements(node, actual.ReturnStatement),
+        .ExpressionStatement => |node| try expectEqualExpressionStatements(node, actual.ExpressionStatement),
 
-        .BlockStatement => |node| try expectEqualBlockStatement(node, actual.BlockStatement),
+        .BlockStatement => |node| try expectEqualBlockStatements(node, actual.BlockStatement),
 
         // Expressions
-        .Identifier => |node| try expectEqualIdentifier(node, actual.Identifier),
-        .Integer => |node| try expectEqualInteger(node, actual.Integer),
-        .Boolean => |node| try expectEqualBoolean(node, actual.Boolean),
+        .Identifier => |node| try expectEqualIdentifiers(node, actual.Identifier),
+        .Integer => |node| try expectEqualIntegers(node, actual.Integer),
+        .Boolean => |node| try expectEqualBooleans(node, actual.Boolean),
 
-        .PrefixExpression => |node| try expectEqualPrefixExpression(node, actual.PrefixExpression),
-        .InfixExpression => |node| try expectEqualInfixExpression(node, actual.InfixExpression),
-        .GroupedExpression => |node| try expectEqualGroupedExpression(node, actual.GroupedExpression),
-        .IfExpression => |node| try expectEqualIfExpression(node, actual.IfExpression),
-        .FunctionLiteral => |node| try expectEqualFunctionLiteral(node, actual.FunctionLiteral),
-        .CallExpression => |node| try expectEqualCallExpression(node, actual.CallExpression),
+        .PrefixExpression => |node| try expectEqualPrefixExpressions(node, actual.PrefixExpression),
+        .InfixExpression => |node| try expectEqualInfixExpressions(node, actual.InfixExpression),
+        .GroupedExpression => |node| try expectEqualGroupedExpressions(node, actual.GroupedExpression),
+        .IfExpression => |node| try expectEqualIfExpressions(node, actual.IfExpression),
+        .FunctionLiteral => |node| try expectEqualFunctionLiterals(node, actual.FunctionLiteral),
+        .CallExpression => |node| try expectEqualCallExpressions(node, actual.CallExpression),
     }
 }
 
-fn expectEqualToken(expected: Token, actual: Token) !void {
+fn expectEqualTokens(expected: Token, actual: Token) !void {
     try std.testing.expectEqual(expected.type, actual.type);
     try std.testing.expectEqualStrings(expected.literal, actual.literal);
 }
 
-fn expectEqualLetStatement(expected: *const Ast.LetStatement, actual: *const Ast.LetStatement) !void {
-    try expectEqualToken(expected.token, actual.token);
-    try expectEqualIdentifier(expected.name, actual.name);
-    try expectEqualNode(expected.value, actual.value);
+fn expectEqualLetStatements(expected: *const Ast.LetStatement, actual: *const Ast.LetStatement) !void {
+    try expectEqualTokens(expected.token, actual.token);
+    try expectEqualIdentifiers(expected.name, actual.name);
+    try expectEqualNodes(expected.value, actual.value);
 }
 
-fn expectEqualReturnStatement(expected: *const Ast.ReturnStatement, actual: *const Ast.ReturnStatement) !void {
-    try expectEqualToken(expected.token, actual.token);
-    try expectEqualNode(expected.return_value, actual.return_value);
+fn expectEqualReturnStatements(expected: *const Ast.ReturnStatement, actual: *const Ast.ReturnStatement) !void {
+    try expectEqualTokens(expected.token, actual.token);
+    try expectEqualNodes(expected.return_value, actual.return_value);
 }
 
-fn expectEqualExpressionStatement(expected: *const Ast.ExpressionStatement, actual: *const Ast.ExpressionStatement) !void {
-    try expectEqualToken(expected.token, actual.token);
-    try expectEqualNode(expected.expression, actual.expression);
+fn expectEqualExpressionStatements(expected: *const Ast.ExpressionStatement, actual: *const Ast.ExpressionStatement) !void {
+    try expectEqualTokens(expected.token, actual.token);
+    try expectEqualNodes(expected.expression, actual.expression);
 }
 
-fn expectEqualBlockStatement(expected: *const Ast.BlockStatement, actual: *const Ast.BlockStatement) !void {
-    try expectEqualToken(expected.token, actual.token);
-    try expectEqualNodes(expected.statements, actual.statements);
+fn expectEqualBlockStatements(expected: *const Ast.BlockStatement, actual: *const Ast.BlockStatement) !void {
+    try expectEqualTokens(expected.token, actual.token);
+    try expectEqualNodeSlices(expected.statements, actual.statements);
 }
 
-fn expectEqualIdentifier(expected: *const Ast.Identifier, actual: *const Ast.Identifier) !void {
-    try expectEqualToken(expected.token, actual.token);
+fn expectEqualIdentifiers(expected: *const Ast.Identifier, actual: *const Ast.Identifier) !void {
+    try expectEqualTokens(expected.token, actual.token);
     try std.testing.expectEqualStrings(expected.value, actual.value);
 }
 
-fn expectEqualInteger(expected: *const Ast.Integer, actual: *const Ast.Integer) !void {
-    try expectEqualToken(expected.token, actual.token);
+fn expectEqualIntegers(expected: *const Ast.Integer, actual: *const Ast.Integer) !void {
+    try expectEqualTokens(expected.token, actual.token);
     try std.testing.expectEqual(expected.value, actual.value);
 }
 
-fn expectEqualBoolean(expected: *const Ast.Boolean, actual: *const Ast.Boolean) !void {
-    try expectEqualToken(expected.token, actual.token);
+fn expectEqualBooleans(expected: *const Ast.Boolean, actual: *const Ast.Boolean) !void {
+    try expectEqualTokens(expected.token, actual.token);
     try std.testing.expectEqual(expected.value, actual.value);
 }
 
-fn expectEqualPrefixExpression(expected: *const Ast.PrefixExpression, actual: *const Ast.PrefixExpression) !void {
-    try expectEqualToken(expected.token, actual.token);
+fn expectEqualPrefixExpressions(expected: *const Ast.PrefixExpression, actual: *const Ast.PrefixExpression) !void {
+    try expectEqualTokens(expected.token, actual.token);
     try std.testing.expectEqualStrings(expected.operator, actual.operator);
-    try expectEqualNode(expected.operand, actual.operand);
+    try expectEqualNodes(expected.operand, actual.operand);
 }
 
-fn expectEqualInfixExpression(expected: *const Ast.InfixExpression, actual: *const Ast.InfixExpression) !void {
-    try expectEqualToken(expected.token, actual.token);
+fn expectEqualInfixExpressions(expected: *const Ast.InfixExpression, actual: *const Ast.InfixExpression) !void {
+    try expectEqualTokens(expected.token, actual.token);
     try std.testing.expectEqualStrings(expected.operator, actual.operator);
-    try expectEqualNode(expected.left_operand, actual.left_operand);
-    try expectEqualNode(expected.right_operand, actual.right_operand);
+    try expectEqualNodes(expected.left_operand, actual.left_operand);
+    try expectEqualNodes(expected.right_operand, actual.right_operand);
 }
 
-fn expectEqualGroupedExpression(expected: *const Ast.GroupedExpression, actual: *const Ast.GroupedExpression) !void {
-    try expectEqualToken(expected.token, actual.token);
-    try expectEqualNode(expected.expression, actual.expression);
+fn expectEqualGroupedExpressions(expected: *const Ast.GroupedExpression, actual: *const Ast.GroupedExpression) !void {
+    try expectEqualTokens(expected.token, actual.token);
+    try expectEqualNodes(expected.expression, actual.expression);
 }
 
-fn expectEqualIfExpression(expected: *const Ast.IfExpression, actual: *const Ast.IfExpression) !void {
-    try expectEqualToken(expected.token, actual.token);
-    try expectEqualNode(expected.condition, actual.condition);
-    try expectEqualNode(expected.consequence, actual.consequence);
+fn expectEqualIfExpressions(expected: *const Ast.IfExpression, actual: *const Ast.IfExpression) !void {
+    try expectEqualTokens(expected.token, actual.token);
+    try expectEqualNodes(expected.condition, actual.condition);
+    try expectEqualNodes(expected.consequence, actual.consequence);
     if (expected.alternative) |alternative| {
         try std.testing.expect(actual.alternative != null);
-        try expectEqualNode(alternative, actual.alternative.?);
+        try expectEqualNodes(alternative, actual.alternative.?);
     } else {
         try std.testing.expectEqual(expected.alternative, actual.alternative);
     }
 }
 
-fn expectEqualFunctionLiteral(expected: *const Ast.FunctionLiteral, actual: *const Ast.FunctionLiteral) !void {
-    try expectEqualToken(expected.token, actual.token);
+fn expectEqualFunctionLiterals(expected: *const Ast.FunctionLiteral, actual: *const Ast.FunctionLiteral) !void {
+    try expectEqualTokens(expected.token, actual.token);
     try std.testing.expectEqual(expected.parameters.len, actual.parameters.len);
     for (expected.parameters, actual.parameters) |expected_param, actual_param| {
-        try expectEqualIdentifier(expected_param, actual_param);
+        try expectEqualIdentifiers(expected_param, actual_param);
     }
-    try expectEqualBlockStatement(expected.body, actual.body);
+    try expectEqualBlockStatements(expected.body, actual.body);
 }
 
-fn expectEqualCallExpression(expected: *const Ast.CallExpression, actual: *const Ast.CallExpression) !void {
-    try expectEqualToken(expected.token, actual.token);
-    try expectEqualNode(expected.function, actual.function);
-    try expectEqualNodes(expected.arguments, actual.arguments);
+fn expectEqualCallExpressions(expected: *const Ast.CallExpression, actual: *const Ast.CallExpression) !void {
+    try expectEqualTokens(expected.token, actual.token);
+    try expectEqualNodes(expected.function, actual.function);
+    try expectEqualNodeSlices(expected.arguments, actual.arguments);
 }

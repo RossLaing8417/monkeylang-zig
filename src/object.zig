@@ -51,7 +51,7 @@ pub const Boolean = struct {
 };
 
 pub const Function = struct {
-    parameters: []*Ast.Identifier,
+    parameters: []const *Ast.Identifier,
     body: *Ast.BlockStatement,
     environment: *Environment,
 

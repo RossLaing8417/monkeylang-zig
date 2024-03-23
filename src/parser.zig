@@ -48,10 +48,11 @@ fn parseExpression(self: *Parser, precedence: Precedence) Error!Node {
     var left_operand = switch (self.tokens[self.tok_i].type) {
         .Identifier => try self.parseIdentifier(),
         .Integer => try self.parseInteger(),
-        .Bang => try self.parsePrefixExpression(),
-        .Minus => try self.parsePrefixExpression(),
         .True => try self.parseBoolean(),
         .False => try self.parseBoolean(),
+        .String => try self.parseString(),
+        .Bang => try self.parsePrefixExpression(),
+        .Minus => try self.parsePrefixExpression(),
         .LeftParen => try self.parseGroupedExpression(),
         .If => try self.parseIfExpression(),
         .Function => try self.parseFunctionLiteral(),
@@ -278,6 +279,18 @@ fn parseBoolean(self: *Parser) Error!Node {
     return .{ .Boolean = boolean };
 }
 
+fn parseString(self: *Parser) Error!Node {
+    const token = try self.expectToken(.String);
+
+    var string = try self.allocator.create(Ast.String);
+    string.* = .{
+        .token = token,
+        .value = token.literal,
+    };
+
+    return .{ .String = string };
+}
+
 fn parsePrefixExpression(self: *Parser) Error!Node {
     const token = self.nextToken();
 
@@ -360,6 +373,7 @@ test "Let Statement" {
         \\let foo = 10;
         \\let bar = true;
         \\let baz = foo;
+        \\let str = "string";
     ;
 
     const expected = [_]Node{
@@ -382,6 +396,13 @@ test "Let Statement" {
                 .token = .{ .type = .Let, .literal = "let" },
                 .name = @constCast(&Ast.Identifier{ .token = .{ .type = .Identifier, .literal = "baz" }, .value = "baz" }),
                 .value = .{ .Identifier = @constCast(&Ast.Identifier{ .token = .{ .type = .Identifier, .literal = "foo" }, .value = "foo" }) },
+            }),
+        },
+        .{
+            .LetStatement = @constCast(&Ast.LetStatement{
+                .token = .{ .type = .Let, .literal = "let" },
+                .name = @constCast(&Ast.Identifier{ .token = .{ .type = .Identifier, .literal = "str" }, .value = "str" }),
+                .value = .{ .String = @constCast(&Ast.String{ .token = .{ .type = .String, .literal = "string" }, .value = "string" }) },
             }),
         },
     };
@@ -802,6 +823,7 @@ fn expectEqualNodes(expected: Node, actual: Node) TestError!void {
         .Identifier => |node| try expectEqualIdentifiers(node, actual.Identifier),
         .Integer => |node| try expectEqualIntegers(node, actual.Integer),
         .Boolean => |node| try expectEqualBooleans(node, actual.Boolean),
+        .String => |node| try expectEqualStrings(node, actual.String),
 
         .PrefixExpression => |node| try expectEqualPrefixExpressions(node, actual.PrefixExpression),
         .InfixExpression => |node| try expectEqualInfixExpressions(node, actual.InfixExpression),
@@ -851,6 +873,11 @@ fn expectEqualIntegers(expected: *const Ast.Integer, actual: *const Ast.Integer)
 fn expectEqualBooleans(expected: *const Ast.Boolean, actual: *const Ast.Boolean) !void {
     try expectEqualTokens(expected.token, actual.token);
     try std.testing.expectEqual(expected.value, actual.value);
+}
+
+fn expectEqualStrings(expected: *const Ast.String, actual: *const Ast.String) !void {
+    try expectEqualTokens(expected.token, actual.token);
+    try std.testing.expectEqualStrings(expected.value, actual.value);
 }
 
 fn expectEqualPrefixExpressions(expected: *const Ast.PrefixExpression, actual: *const Ast.PrefixExpression) !void {

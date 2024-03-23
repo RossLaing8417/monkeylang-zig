@@ -16,6 +16,8 @@ allocator: std.mem.Allocator,
 last_error: std.ArrayList(u8),
 /// This exists as I don't have a solid solution to closures yet
 closure_bin: std.ArrayList(*Environment),
+/// Now I'm being lazy...
+string_bin: std.ArrayList([]const u8),
 
 pub fn init(allocator: std.mem.Allocator) !*Evaluator {
     var evaluator = try allocator.create(Evaluator);
@@ -23,14 +25,19 @@ pub fn init(allocator: std.mem.Allocator) !*Evaluator {
         .allocator = allocator,
         .last_error = try std.ArrayList(u8).initCapacity(allocator, 64),
         .closure_bin = std.ArrayList(*Environment).init(allocator),
+        .string_bin = std.ArrayList([]const u8).init(allocator),
     };
     return evaluator;
 }
 
 pub fn deinit(self: *Evaluator) void {
+    for (self.string_bin.items) |string| {
+        self.allocator.free(string);
+    }
     for (self.closure_bin.items) |environment| {
         environment.deinit(self.allocator);
     }
+    self.string_bin.deinit();
     self.closure_bin.deinit();
     self.last_error.deinit();
     self.allocator.destroy(self);
@@ -79,6 +86,9 @@ pub fn eval(self: *Evaluator, node: Ast.Node, environment: *Environment) error{O
         },
         .Boolean => |boolean| {
             return .{ .Literal = .{ .Boolean = .{ .value = boolean.value } } };
+        },
+        .String => |string| {
+            return .{ .Literal = .{ .String = .{ .value = string.value } } };
         },
 
         .PrefixExpression => |prefix_expr| {
@@ -206,6 +216,19 @@ fn evalInfixExpression(self: *Evaluator, operator: Lexer.Token, left_operand: Ob
                         ),
                     }
                 },
+                .String => |left_string| {
+                    switch (right_literal) {
+                        .String => |right_string| return self.evalStringInfixExpression(
+                            operator,
+                            left_string.value,
+                            right_string.value,
+                        ),
+                        else => return try self.evalError(
+                            "Right operand type mismatch. Invalid operation: 'String' {s} '{s}'",
+                            .{ operator.literal, @tagName(right_literal) },
+                        ),
+                    }
+                },
                 .Null => return NULL,
                 else => return try self.evalError(
                     "Invalid literal '{s}' for left operand",
@@ -248,6 +271,21 @@ fn evalBooleanInfixExpression(self: *Evaluator, operator: Lexer.Token, left_oper
     }
 }
 
+fn evalStringInfixExpression(self: *Evaluator, operator: Lexer.Token, left_operand: []const u8, right_operand: []const u8) !Object {
+    switch (operator.type) {
+        .Plus => {
+            var buffer = try self.allocator.alloc(u8, left_operand.len + right_operand.len);
+            std.mem.copyForwards(u8, buffer, left_operand);
+            std.mem.copyForwards(u8, buffer[left_operand.len..], right_operand);
+            try self.string_bin.append(buffer);
+            return .{ .Literal = .{ .String = .{ .value = buffer } } };
+        },
+        .Equal => return .{ .Literal = .{ .Boolean = .{ .value = std.mem.eql(u8, left_operand, right_operand) } } },
+        .NotEqual => return .{ .Literal = .{ .Boolean = .{ .value = !std.mem.eql(u8, left_operand, right_operand) } } },
+        else => return try self.evalError("Invalid operation: 'String' {s} 'String'", .{operator.literal}),
+    }
+}
+
 fn evalIfExpression(self: *Evaluator, if_expr: *const Ast.IfExpression, environment: *Environment) !Object {
     const condition = try self.eval(if_expr.condition, environment);
     if (condition == .Error) {
@@ -282,7 +320,12 @@ fn evalCallExpression(self: *Evaluator, call_expr: *const Ast.CallExpression, en
         break :blk function.Literal.Function;
     };
 
-    std.debug.assert(call_expr.arguments.len == function.parameters.len);
+    if (call_expr.arguments.len != function.parameters.len) {
+        return self.evalError(
+            "Call expression signature mismatch. Expected {d} arguments but found {d}",
+            .{ function.parameters.len, call_expr.arguments.len },
+        );
+    }
 
     var enclosed_env = try Environment.initEnclosed(self.allocator, function.environment);
     errdefer enclosed_env.deinit(self.allocator);
@@ -318,7 +361,7 @@ fn isTruthy(object: Object) bool {
     }
 }
 
-fn evalError(self: *Evaluator, comptime message: []const u8, args: anytype) !Object {
+pub fn evalError(self: *Evaluator, comptime message: []const u8, args: anytype) !Object {
     self.last_error.shrinkRetainingCapacity(0);
     try self.last_error.writer().print(message, args);
     return .{ .Error = .{ .value = self.last_error.items } };
@@ -444,6 +487,46 @@ test "Eval Bang Operator" {
     }
 }
 
+test "Eval Strings" {
+    const input = [_]TestInput{
+        .{
+            .input =
+            \\"Hello World!"
+            ,
+            .expected = .{ .Literal = .{ .String = .{ .value = "Hello World!" } } },
+        },
+        .{
+            .input =
+            \\"Hello" + " " + "World!"
+            ,
+            .expected = .{ .Literal = .{ .String = .{ .value = "Hello World!" } } },
+        },
+        .{
+            .input =
+            \\"Hello" != "World!"
+            ,
+            .expected = .{ .Literal = .{ .Boolean = .{ .value = true } } },
+        },
+    };
+
+    var allocator = std.testing.allocator;
+    var evaluator = try Evaluator.init(allocator);
+    defer evaluator.deinit();
+
+    for (input) |test_input| {
+        var ast = try Ast.parse(allocator, test_input.input);
+        defer ast.deinit(allocator);
+
+        try testAst(&ast);
+
+        var environment = try Environment.init(allocator);
+        defer environment.deinit(allocator);
+
+        var result = try evaluator.evalAst(&ast, environment);
+        try expectEqualObjects(test_input.expected, result);
+    }
+}
+
 test "Eval If Else Expression" {
     const input = [_]TestInput{
         .{ .input = "if (true) { 10 }", .expected = .{ .Literal = .{ .Integer = .{ .value = 10 } } } },
@@ -529,6 +612,12 @@ test "Eval Error Handling" {
             .expected = .{ .Error = .{ .value = "Invalid operation: 'Boolean' + 'Boolean'" } },
         },
         .{ .input = "foobar", .expected = .{ .Error = .{ .value = "Unknown identifier: 'foobar'" } } },
+        .{
+            .input =
+            \\"Hello" - "World"
+            ,
+            .expected = .{ .Error = .{ .value = "Invalid operation: 'String' - 'String'" } },
+        },
     };
 
     var allocator = std.testing.allocator;
@@ -680,6 +769,7 @@ fn expectEqualLiterals(expected: ObjectType.Literal, actual: ObjectType.Literal)
     switch (expected) {
         .Integer => |integer| try std.testing.expectEqual(integer.value, actual.Integer.value),
         .Boolean => |boolean| try std.testing.expectEqual(boolean.value, actual.Boolean.value),
+        .String => |string| try std.testing.expectEqualStrings(string.value, actual.String.value),
         .Function => |function| try expectEqualFunctions(function, actual.Function),
         .Null => {},
     }

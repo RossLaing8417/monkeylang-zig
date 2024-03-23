@@ -12,6 +12,7 @@ pub const Type = enum {
     // Literals
     Identifier,
     Integer,
+    String,
 
     // Operators
     Assign,

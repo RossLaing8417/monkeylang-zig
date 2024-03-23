@@ -79,6 +79,7 @@ pub const Node = union(enum) {
     Identifier: *Identifier,
     Integer: *Integer,
     Boolean: *Boolean,
+    String: *String,
 
     PrefixExpression: *PrefixExpression,
     InfixExpression: *InfixExpression,
@@ -264,6 +265,24 @@ pub const Boolean = struct {
     pub fn write(self: *const Boolean, buffer: *std.ArrayList(u8), _: Node.WriteOption) !void {
         var writer = buffer.writer();
         try writer.print("{}", .{self.value});
+    }
+};
+
+pub const String = struct {
+    token: Token,
+    value: []const u8,
+
+    pub fn deinit(self: *String, allocator: std.mem.Allocator) void {
+        allocator.destroy(self);
+    }
+
+    pub fn tokenLiteral(self: *const String) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: *const String, buffer: *std.ArrayList(u8), _: Node.WriteOption) !void {
+        var writer = buffer.writer();
+        try writer.print("\"{s}\"", .{self.value});
     }
 };
 

@@ -63,6 +63,12 @@ pub fn nextToken(self: *Lexer) Token {
             return .{ .type = .Integer, .literal = self.readNumber() };
         },
 
+        '"' => {
+            const literal = self.readString();
+            self.readChar();
+            return .{ .type = .String, .literal = literal };
+        },
+
         else => .{ .type = .Illegal, .literal = "" },
     };
 
@@ -101,6 +107,22 @@ fn readNumber(self: *Lexer) []const u8 {
     return self.input[position..self.position];
 }
 
+fn readString(self: *Lexer) []const u8 {
+    // Read the starting "
+    self.readChar();
+
+    var start = self.position;
+
+    while (self.ch != '"') {
+        if (self.ch == '\\' and self.peekChar() == '"') {
+            self.readChar();
+        }
+        self.readChar();
+    }
+
+    return self.input[start..self.position];
+}
+
 fn skipWhiteSpace(self: *Lexer) void {
     while (std.ascii.isWhitespace(self.ch)) {
         self.readChar();
@@ -131,6 +153,9 @@ test "Lexer" {
         \\}
         \\10 == 10;
         \\10 != 9;
+        \\"foobar";
+        \\"foo bar";
+        \\"foo\"bar\"baz";
     ;
 
     const expected = [_]Token{
@@ -207,12 +232,20 @@ test "Lexer" {
         .{ .type = .NotEqual, .literal = "!=" },
         .{ .type = .Integer, .literal = "9" },
         .{ .type = .SemiColon, .literal = ";" },
+        .{ .type = .String, .literal = "foobar" },
+        .{ .type = .SemiColon, .literal = ";" },
+        .{ .type = .String, .literal = "foo bar" },
+        .{ .type = .SemiColon, .literal = ";" },
+        .{ .type = .String, .literal = "foo\\\"bar\\\"baz" },
+        .{ .type = .SemiColon, .literal = ";" },
         .{ .type = .Eof, .literal = "" },
     };
 
     var lexer = Lexer.init(input);
 
     for (expected) |token| {
-        try std.testing.expectEqualDeep(token, lexer.nextToken());
+        const result = lexer.nextToken();
+        try std.testing.expectEqual(token.type, result.type);
+        try std.testing.expectEqualStrings(token.literal, result.literal);
     }
 }

@@ -160,7 +160,7 @@ fn evalIdentifier(self: *Evaluator, identifier: *const Ast.Identifier, environme
         return .{ .Value = object.* };
     }
 
-    if (Builtin.map.get(identifier.value)) |builtin| {
+    if (Builtin.FunctionMap.get(identifier.value)) |builtin| {
         return .{ .BuiltinFunction = builtin };
     }
 
@@ -440,9 +440,16 @@ fn evalIndexExpression(self: *Evaluator, index_expr: *const Ast.IndexExpression,
 
 fn evalBuiltinFunction(self: *Evaluator, builtin: Object.BuiltinFunction, arguments: []const Ast.Node, environment: *Environment) !Container {
     const args = try self.allocator.alloc(Container, arguments.len);
-    defer self.allocator.free(args);
+    defer {
+        for (args, arguments) |*arg, argument| {
+            if (argument != .Identifier) {
+                arg.deinit(self.allocator);
+            }
+        }
+        self.allocator.free(args);
+    }
 
-    for (arguments, args) |argument, *arg| {
+    for (args, arguments) |*arg, argument| {
         var result = try self.eval(argument, environment);
         if (result == .Error) {
             return result;
@@ -855,13 +862,19 @@ test "Eval Builtins" {
             .input =
             \\len(1)
             ,
-            .expected = .{ .Error = .{ .value = "Builtin signature mismatch. Expected 'String' but found 'Integer'" } },
+            .expected = .{ .Error = .{ .value = "Builtin signature mismatch. Expected 'String' or 'Array' but found 'Integer'" } },
         },
         .{
             .input =
             \\len("one", "two")
             ,
             .expected = .{ .Error = .{ .value = "Builtin signature mismatch. Expected 1 argument but found 2" } },
+        },
+        .{
+            .input =
+            \\len([1, 2, 3])
+            ,
+            .expected = .{ .Value = .{ .Integer = .{ .value = 3 } } },
         },
     };
 

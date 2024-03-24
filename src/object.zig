@@ -20,10 +20,10 @@ pub const Container = union(enum) {
 
     pub fn copy(self: *Container, allocator: std.mem.Allocator) !Container {
         return switch (self.*) {
-            .Value => |*value| .{ .Value = try value.copy(allocator) },
-            .ReturnValue => |*literal| .{ .ReturnValue = try literal.copy(allocator) },
+            .Value => |value| .{ .Value = try value.copy(allocator) },
+            .ReturnValue => |literal| .{ .ReturnValue = try literal.copy(allocator) },
             .BuiltinFunction => unreachable,
-            .Error => |*err| .{ .Error = try err.copy(allocator) },
+            .Error => |err| .{ .Error = try err.copy(allocator) },
         };
     }
 
@@ -41,7 +41,7 @@ pub const Error = struct {
         allocator.free(self.value);
     }
 
-    pub fn copy(self: *Error, allocator: std.mem.Allocator) !Error {
+    pub fn copy(self: *const Error, allocator: std.mem.Allocator) !Error {
         return .{ .value = try allocator.dupe(u8, self.value) };
     }
 
@@ -76,11 +76,11 @@ pub const Value = union(enum) {
         }
     }
 
-    pub fn copy(self: *Value, allocator: std.mem.Allocator) !Value {
+    pub fn copy(self: *const Value, allocator: std.mem.Allocator) !Value {
         return switch (self.*) {
-            .String => |*string| .{ .String = try string.copy(allocator) },
-            .Array => |*array| .{ .Array = try array.copy(allocator) },
-            .Function => |*function| .{ .Function = try function.copy(allocator) },
+            .String => |string| .{ .String = try string.copy(allocator) },
+            .Array => |array| .{ .Array = try array.copy(allocator) },
+            .Function => |function| .{ .Function = try function.copy(allocator) },
             else => self.*,
         };
     }
@@ -131,7 +131,7 @@ pub const String = struct {
         }
     }
 
-    pub fn copy(self: *String, allocator: std.mem.Allocator) !String {
+    pub fn copy(self: *const String, allocator: std.mem.Allocator) !String {
         return .{ .value = try allocator.dupe(u8, self.value), .owned = true };
     }
 
@@ -156,7 +156,7 @@ pub const Function = struct {
         self.environment.decRef();
     }
 
-    pub fn copy(self: *Function, _: std.mem.Allocator) !Function {
+    pub fn copy(self: *const Function, _: std.mem.Allocator) !Function {
         self.environment.incRef();
         return self.*;
     }
@@ -184,7 +184,19 @@ pub const Array = struct {
 
     pub fn initAppend(allocator: std.mem.Allocator, from: []const Value, value: Value) !Array {
         var values = try allocator.alloc(Value, from.len + 1);
-        values[from.len] = value;
+        for (0..from.len) |i| {
+            values[i] = try from[i].copy(allocator);
+        }
+        values[from.len] = try value.copy(allocator);
+        return .{ .values = values };
+    }
+
+    pub fn initCopy(allocator: std.mem.Allocator, from: []const Value) !Array {
+        var values = try allocator.alloc(Value, from.len);
+        for (values, from) |value, val| {
+            value.* = try val.copy(allocator);
+        }
+        return .{ .values = values };
     }
 
     pub fn deinit(self: *Array, allocator: std.mem.Allocator) void {
@@ -199,9 +211,9 @@ pub const Array = struct {
         allocator.free(self.values);
     }
 
-    pub fn copy(self: *Array, allocator: std.mem.Allocator) std.mem.Allocator.Error!Array {
+    pub fn copy(self: *const Array, allocator: std.mem.Allocator) std.mem.Allocator.Error!Array {
         var values = try allocator.alloc(Value, self.values.len);
-        for (values, self.values) |*to, *from| {
+        for (values, self.values) |*to, from| {
             to.* = try from.copy(allocator);
         }
         return .{ .values = values };

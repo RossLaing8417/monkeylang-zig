@@ -50,6 +50,8 @@ pub fn nextToken(self: *Lexer) Token {
         ')' => .{ .type = .RightParen, .literal = ")" },
         '{' => .{ .type = .LeftBrace, .literal = "{" },
         '}' => .{ .type = .RightBrace, .literal = "}" },
+        '[' => .{ .type = .LeftBracket, .literal = "[" },
+        ']' => .{ .type = .RightBracket, .literal = "]" },
         0 => .{ .type = .Eof, .literal = "" },
 
         'a'...'z', 'A'...'Z', '_' => {
@@ -156,6 +158,7 @@ test "Lexer" {
         \\"foobar";
         \\"foo bar";
         \\"foo\"bar\"baz";
+        \\[1, 2];
     ;
 
     const expected = [_]Token{
@@ -237,6 +240,12 @@ test "Lexer" {
         .{ .type = .String, .literal = "foo bar" },
         .{ .type = .SemiColon, .literal = ";" },
         .{ .type = .String, .literal = "foo\\\"bar\\\"baz" },
+        .{ .type = .SemiColon, .literal = ";" },
+        .{ .type = .LeftBracket, .literal = "[" },
+        .{ .type = .Integer, .literal = "1" },
+        .{ .type = .Comma, .literal = "," },
+        .{ .type = .Integer, .literal = "2" },
+        .{ .type = .RightBracket, .literal = "]" },
         .{ .type = .SemiColon, .literal = ";" },
         .{ .type = .Eof, .literal = "" },
     };

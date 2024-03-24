@@ -23,6 +23,7 @@ const Precedence = enum(u8) {
     Product,
     Prefix,
     Call,
+    Index,
 };
 
 pub fn parseProgram(self: *Parser) Error!void {
@@ -56,6 +57,7 @@ fn parseExpression(self: *Parser, precedence: Precedence) Error!Node {
         .LeftParen => try self.parseGroupedExpression(),
         .If => try self.parseIfExpression(),
         .Function => try self.parseFunctionLiteral(),
+        .LeftBracket => try self.parseArrayLiteral(),
         else => unreachable,
     };
 
@@ -81,12 +83,14 @@ fn parseExpression(self: *Parser, precedence: Precedence) Error!Node {
             .LessThan,
             .GreaterThan,
             .LeftParen,
+            .LeftBracket,
             => {},
             else => return left_operand,
         }
 
         left_operand = switch (self.tokens[self.tok_i].type) {
             .LeftParen => try self.parseCallExpression(left_operand),
+            .LeftBracket => try self.parseIndexExpression(left_operand),
             else => try self.parseInfixExpression(left_operand),
         };
     }
@@ -131,39 +135,6 @@ fn parseIfExpression(self: *Parser) Error!Node {
     return .{ .IfExpression = if_expression };
 }
 
-fn parseFunctionLiteral(self: *Parser) Error!Node {
-    var parameters = std.ArrayList(*Ast.Identifier).init(self.allocator);
-    defer parameters.deinit();
-
-    const token = try self.expectToken(.Function);
-    _ = try self.expectToken(.LeftParen);
-
-    while (!self.currentTokenIs(.RightParen)) {
-        const tok = try self.expectToken(.Identifier);
-
-        var identifier = try self.allocator.create(Ast.Identifier);
-        identifier.* = Ast.Identifier{
-            .token = tok,
-            .value = tok.literal,
-        };
-
-        try parameters.append(identifier);
-
-        _ = self.consumeToken(.Comma);
-    }
-
-    _ = try self.expectToken(.RightParen);
-
-    var function_literal = try self.allocator.create(Ast.FunctionLiteral);
-    function_literal.* = .{
-        .token = token,
-        .body = (try self.parseBlockStatement()).BlockStatement,
-        .parameters = try parameters.toOwnedSlice(),
-    };
-
-    return .{ .FunctionLiteral = function_literal };
-}
-
 fn parseCallExpression(self: *Parser, function: Node) Error!Node {
     var arguments = std.ArrayList(Node).init(self.allocator);
     defer arguments.deinit();
@@ -185,6 +156,22 @@ fn parseCallExpression(self: *Parser, function: Node) Error!Node {
     };
 
     return .{ .CallExpression = call_expression };
+}
+
+fn parseIndexExpression(self: *Parser, expression: Node) Error!Node {
+    const token = try self.expectToken(.LeftBracket);
+    const index = try self.parseExpression(.Lowest);
+
+    _ = try self.expectToken(.RightBracket);
+
+    var index_expression = try self.allocator.create(Ast.IndexExpression);
+    index_expression.* = .{
+        .token = token,
+        .expression = expression,
+        .index = index,
+    };
+
+    return .{ .IndexExpression = index_expression };
 }
 
 fn parseBlockStatement(self: *Parser) Error!Node {
@@ -291,6 +278,61 @@ fn parseString(self: *Parser) Error!Node {
     return .{ .String = string };
 }
 
+fn parseFunctionLiteral(self: *Parser) Error!Node {
+    var parameters = std.ArrayList(*Ast.Identifier).init(self.allocator);
+    defer parameters.deinit();
+
+    const token = try self.expectToken(.Function);
+    _ = try self.expectToken(.LeftParen);
+
+    while (!self.currentTokenIs(.RightParen)) {
+        const tok = try self.expectToken(.Identifier);
+
+        var identifier = try self.allocator.create(Ast.Identifier);
+        identifier.* = Ast.Identifier{
+            .token = tok,
+            .value = tok.literal,
+        };
+
+        try parameters.append(identifier);
+
+        _ = self.consumeToken(.Comma);
+    }
+
+    _ = try self.expectToken(.RightParen);
+
+    var function_literal = try self.allocator.create(Ast.FunctionLiteral);
+    function_literal.* = .{
+        .token = token,
+        .body = (try self.parseBlockStatement()).BlockStatement,
+        .parameters = try parameters.toOwnedSlice(),
+    };
+
+    return .{ .FunctionLiteral = function_literal };
+}
+
+fn parseArrayLiteral(self: *Parser) Error!Node {
+    var elements = std.ArrayList(Node).init(self.allocator);
+    defer elements.deinit();
+
+    const token = try self.expectToken(.LeftBracket);
+
+    while (!self.currentTokenIs(.RightBracket)) {
+        try elements.append(try self.parseExpression(.Lowest));
+        _ = self.consumeToken(.Comma);
+    }
+
+    _ = try self.expectToken(.RightBracket);
+
+    var array_literal = try self.allocator.create(Ast.ArrayLiteral);
+    array_literal.* = .{
+        .token = token,
+        .elements = try elements.toOwnedSlice(),
+    };
+
+    return .{ .ArrayLiteral = array_literal };
+}
+
 fn parsePrefixExpression(self: *Parser) Error!Node {
     const token = self.nextToken();
 
@@ -364,6 +406,7 @@ fn tokenPrecedence(token: Token) Precedence {
         .Asterisk => .Product,
         .Slash => .Product,
         .LeftParen => .Call,
+        .LeftBracket => .Index,
         else => .Lowest,
     };
 }
@@ -621,6 +664,8 @@ test "Operator Precedence" {
         .{ .input = "a + add(b * c) + d", .expected = "((a + add((b * c))) + d)" },
         .{ .input = "add(a, b, 1, 2 * 3, 4 + 5, add(6, 7 * 8))", .expected = "add(a, b, 1, (2 * 3), (4 + 5), add(6, (7 * 8)))" },
         .{ .input = "add(a + b + c * d / f + g)", .expected = "add((((a + b) + ((c * d) / f)) + g))" },
+        .{ .input = "a * [1, 2, 3, 4][b * c] * d", .expected = "((a * ([1, 2, 3, 4][(b * c)])) * d)" },
+        .{ .input = "add(a * b[2], b[1], 2 * [1, 2][1])", .expected = "add((a * (b[2])), (b[1]), (2 * ([1, 2][1])))" },
     };
 
     var allocator = std.testing.allocator;
@@ -786,6 +831,78 @@ test "Call Expression" {
     try testAst(&expected, &ast);
 }
 
+test "Arrays" {
+    const input =
+        \\[1, 2 * 2, 3 + 3]
+        \\myArray[1 + 1]
+    ;
+
+    const one = Node{ .Integer = @constCast(&Ast.Integer{ .token = .{ .type = .Integer, .literal = "1" }, .value = 1 }) };
+    const two = Node{ .Integer = @constCast(&Ast.Integer{ .token = .{ .type = .Integer, .literal = "2" }, .value = 2 }) };
+    const three = Node{ .Integer = @constCast(&Ast.Integer{ .token = .{ .type = .Integer, .literal = "3" }, .value = 3 }) };
+    const expected = [_]Node{
+        .{
+            .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
+                .token = .{ .type = .LeftBracket, .literal = "[" }, // ]
+                .expression = .{
+                    .ArrayLiteral = @constCast(&Ast.ArrayLiteral{
+                        .token = .{ .type = .LeftBracket, .literal = "[" }, // ]
+                        .elements = &[_]Node{
+                            one,
+                            .{
+                                .InfixExpression = @constCast(&Ast.InfixExpression{
+                                    .token = .{ .type = .Asterisk, .literal = "*" },
+                                    .operator = "*",
+                                    .left_operand = two,
+                                    .right_operand = two,
+                                }),
+                            },
+                            .{
+                                .InfixExpression = @constCast(&Ast.InfixExpression{
+                                    .token = .{ .type = .Plus, .literal = "+" },
+                                    .operator = "+",
+                                    .left_operand = three,
+                                    .right_operand = three,
+                                }),
+                            },
+                        },
+                    }),
+                },
+            }),
+        },
+        .{
+            .ExpressionStatement = @constCast(&Ast.ExpressionStatement{
+                .token = .{ .type = .Identifier, .literal = "myArray" },
+                .expression = .{
+                    .IndexExpression = @constCast(&Ast.IndexExpression{
+                        .token = .{ .type = .LeftBracket, .literal = "[" }, // ]
+                        .expression = .{
+                            .Identifier = @constCast(&Ast.Identifier{
+                                .token = .{ .type = .Identifier, .literal = "myArray" },
+                                .value = "myArray",
+                            }),
+                        },
+                        .index = .{
+                            .InfixExpression = @constCast(&Ast.InfixExpression{
+                                .token = .{ .type = .Plus, .literal = "+" },
+                                .operator = "+",
+                                .left_operand = one,
+                                .right_operand = one,
+                            }),
+                        },
+                    }),
+                },
+            }),
+        },
+    };
+
+    var allocator = std.testing.allocator;
+    var ast = try Ast.parse(allocator, input);
+    defer ast.deinit(allocator);
+
+    try testAst(&expected, &ast);
+}
+
 const TestError = error{ TestExpectedEqual, TestUnexpectedResult };
 
 fn testAst(expected_nodes: []const Node, ast: *Ast) !void {
@@ -825,12 +942,15 @@ fn expectEqualNodes(expected: Node, actual: Node) TestError!void {
         .Boolean => |node| try expectEqualBooleans(node, actual.Boolean),
         .String => |node| try expectEqualStrings(node, actual.String),
 
+        .FunctionLiteral => |node| try expectEqualFunctionLiterals(node, actual.FunctionLiteral),
+        .ArrayLiteral => |node| try expectEqualArrayLiterals(node, actual.ArrayLiteral),
+
         .PrefixExpression => |node| try expectEqualPrefixExpressions(node, actual.PrefixExpression),
         .InfixExpression => |node| try expectEqualInfixExpressions(node, actual.InfixExpression),
         .GroupedExpression => |node| try expectEqualGroupedExpressions(node, actual.GroupedExpression),
         .IfExpression => |node| try expectEqualIfExpressions(node, actual.IfExpression),
-        .FunctionLiteral => |node| try expectEqualFunctionLiterals(node, actual.FunctionLiteral),
         .CallExpression => |node| try expectEqualCallExpressions(node, actual.CallExpression),
+        .IndexExpression => |node| try expectEqualIndexExpressions(node, actual.IndexExpression),
     }
 }
 
@@ -919,8 +1039,19 @@ fn expectEqualFunctionLiterals(expected: *const Ast.FunctionLiteral, actual: *co
     try expectEqualBlockStatements(expected.body, actual.body);
 }
 
+fn expectEqualArrayLiterals(expected: *const Ast.ArrayLiteral, actual: *const Ast.ArrayLiteral) !void {
+    try expectEqualTokens(expected.token, actual.token);
+    try expectEqualNodeSlices(expected.elements, actual.elements);
+}
+
 fn expectEqualCallExpressions(expected: *const Ast.CallExpression, actual: *const Ast.CallExpression) !void {
     try expectEqualTokens(expected.token, actual.token);
     try expectEqualNodes(expected.function, actual.function);
     try expectEqualNodeSlices(expected.arguments, actual.arguments);
+}
+
+fn expectEqualIndexExpressions(expected: *const Ast.IndexExpression, actual: *const Ast.IndexExpression) !void {
+    try expectEqualTokens(expected.token, actual.token);
+    try expectEqualNodes(expected.expression, actual.expression);
+    try expectEqualNodes(expected.index, actual.index);
 }

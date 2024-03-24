@@ -81,12 +81,15 @@ pub const Node = union(enum) {
     Boolean: *Boolean,
     String: *String,
 
+    FunctionLiteral: *FunctionLiteral,
+    ArrayLiteral: *ArrayLiteral,
+
     PrefixExpression: *PrefixExpression,
     InfixExpression: *InfixExpression,
     GroupedExpression: *GroupedExpression,
     IfExpression: *IfExpression,
-    FunctionLiteral: *FunctionLiteral,
     CallExpression: *CallExpression,
+    IndexExpression: *IndexExpression,
 
     pub const WriteOption = enum {
         none,
@@ -286,6 +289,64 @@ pub const String = struct {
     }
 };
 
+pub const FunctionLiteral = struct {
+    token: Token,
+    parameters: []const *Identifier,
+    body: *BlockStatement,
+
+    pub fn deinit(self: *FunctionLiteral, allocator: std.mem.Allocator) void {
+        for (self.parameters) |parameter| {
+            parameter.deinit(allocator);
+        }
+        allocator.free(self.parameters);
+        self.body.deinit(allocator);
+        allocator.destroy(self);
+    }
+
+    pub fn tokenLiteral(self: *const FunctionLiteral) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: *const FunctionLiteral, buffer: *std.ArrayList(u8), option: Node.WriteOption) !void {
+        var writer = buffer.writer();
+        try writer.print("{s} ", .{self.tokenLiteral()});
+        try writer.writeAll("(");
+        for (self.parameters, 0..) |parameter, i| {
+            if (i > 0) try writer.writeAll(", ");
+            try parameter.write(buffer, option);
+        }
+        try writer.writeAll(") ");
+        try self.body.write(buffer, option);
+    }
+};
+
+pub const ArrayLiteral = struct {
+    token: Token,
+    elements: []const Node,
+
+    pub fn deinit(self: *ArrayLiteral, allocator: std.mem.Allocator) void {
+        for (self.elements) |element| {
+            element.deinit(allocator);
+        }
+        allocator.free(self.elements);
+        allocator.destroy(self);
+    }
+
+    pub fn tokenLiteral(self: *const ArrayLiteral) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: *const ArrayLiteral, buffer: *std.ArrayList(u8), option: Node.WriteOption) !void {
+        var writer = buffer.writer();
+        try writer.writeAll("[");
+        for (self.elements, 0..) |element, i| {
+            if (i > 0) try writer.writeAll(", ");
+            try element.write(buffer, option);
+        }
+        try writer.writeAll("]");
+    }
+};
+
 pub const PrefixExpression = struct {
     token: Token,
     operator: []const u8,
@@ -402,37 +463,6 @@ pub const IfExpression = struct {
     }
 };
 
-pub const FunctionLiteral = struct {
-    token: Token,
-    parameters: []const *Identifier,
-    body: *BlockStatement,
-
-    pub fn deinit(self: *FunctionLiteral, allocator: std.mem.Allocator) void {
-        for (self.parameters) |parameter| {
-            parameter.deinit(allocator);
-        }
-        allocator.free(self.parameters);
-        self.body.deinit(allocator);
-        allocator.destroy(self);
-    }
-
-    pub fn tokenLiteral(self: *const FunctionLiteral) []const u8 {
-        return self.token.literal;
-    }
-
-    pub fn write(self: *const FunctionLiteral, buffer: *std.ArrayList(u8), option: Node.WriteOption) !void {
-        var writer = buffer.writer();
-        try writer.print("{s} ", .{self.tokenLiteral()});
-        try writer.writeAll("(");
-        for (self.parameters, 0..) |parameter, i| {
-            if (i > 0) try writer.writeAll(", ");
-            try parameter.write(buffer, option);
-        }
-        try writer.writeAll(") ");
-        try self.body.write(buffer, option);
-    }
-};
-
 pub const CallExpression = struct {
     token: Token,
     function: Node,
@@ -460,5 +490,35 @@ pub const CallExpression = struct {
             try argument.write(buffer, option);
         }
         try writer.writeAll(")");
+    }
+};
+
+pub const IndexExpression = struct {
+    token: Token,
+    expression: Node,
+    index: Node,
+
+    pub fn deinit(self: *IndexExpression, allocator: std.mem.Allocator) void {
+        self.expression.deinit(allocator);
+        self.index.deinit(allocator);
+        allocator.destroy(self);
+    }
+
+    pub fn tokenLiteral(self: *const IndexExpression) []const u8 {
+        return self.token.literal;
+    }
+
+    pub fn write(self: *const IndexExpression, buffer: *std.ArrayList(u8), option: Node.WriteOption) !void {
+        var writer = buffer.writer();
+        if (option == .debug_precedence) {
+            try writer.writeAll("(");
+        }
+        try self.expression.write(buffer, option);
+        try writer.writeAll("[");
+        try self.index.write(buffer, option);
+        try writer.writeAll("]");
+        if (option == .debug_precedence) {
+            try writer.writeAll(")");
+        }
     }
 };

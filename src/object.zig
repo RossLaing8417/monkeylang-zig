@@ -66,8 +66,8 @@ pub const Value = union(enum) {
     Boolean: Boolean,
     String: String,
 
-    Array: Array,
     Function: Function,
+    Array: Array,
 
     pub fn deinit(self: *Value, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -147,6 +147,38 @@ pub const String = struct {
     }
 };
 
+pub const Function = struct {
+    parameters: []const *Ast.Identifier,
+    body: *Ast.BlockStatement,
+    environment: *Environment,
+
+    pub fn deinit(self: *Function, _: std.mem.Allocator) void {
+        self.environment.decRef();
+    }
+
+    pub fn copy(self: *Function, _: std.mem.Allocator) !Function {
+        self.environment.incRef();
+        return self.*;
+    }
+
+    pub fn inspect(self: *const Function, buffer: *std.ArrayList(u8)) !void {
+        var writer = buffer.writer();
+        try writer.writeAll("fn (");
+
+        for (self.parameters, 0..) |identifier, i| {
+            if (i > 0) {
+                try writer.writeAll(", ");
+            }
+
+            try identifier.write(buffer, .none);
+        }
+
+        try writer.writeAll(")");
+
+        try self.body.write(buffer, .none);
+    }
+};
+
 pub const Array = struct {
     values: []Value,
 
@@ -185,37 +217,5 @@ pub const Array = struct {
             try value.inspect(buffer);
         }
         try writer.writeByte(']');
-    }
-};
-
-pub const Function = struct {
-    parameters: []const *Ast.Identifier,
-    body: *Ast.BlockStatement,
-    environment: *Environment,
-
-    pub fn deinit(self: *Function, _: std.mem.Allocator) void {
-        self.environment.decRef();
-    }
-
-    pub fn copy(self: *Function, _: std.mem.Allocator) !Function {
-        self.environment.incRef();
-        return self.*;
-    }
-
-    pub fn inspect(self: *const Function, buffer: *std.ArrayList(u8)) !void {
-        var writer = buffer.writer();
-        try writer.writeAll("fn (");
-
-        for (self.parameters, 0..) |identifier, i| {
-            if (i > 0) {
-                try writer.writeAll(", ");
-            }
-
-            try identifier.write(buffer, .none);
-        }
-
-        try writer.writeAll(")");
-
-        try self.body.write(buffer, .none);
     }
 };

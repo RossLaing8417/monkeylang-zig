@@ -33,6 +33,8 @@ pub const Type = enum {
     RightParen,
     LeftBrace,
     RightBrace,
+    LeftBracket,
+    RightBracket,
 
     // Keywords
     Function,

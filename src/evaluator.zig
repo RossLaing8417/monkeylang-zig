@@ -77,6 +77,16 @@ pub fn eval(self: *Evaluator, node: Ast.Node, environment: *Environment) Error!C
             return .{ .Value = .{ .String = .{ .value = string.value, .owned = false } } };
         },
 
+        .FunctionLiteral => |function_literal| {
+            environment.incRef();
+            return .{ .Value = .{ .Function = .{
+                .parameters = function_literal.parameters,
+                .body = function_literal.body,
+                .environment = environment,
+            } } };
+        },
+        .ArrayLiteral => {},
+
         .PrefixExpression => |prefix_expr| {
             return try self.evalPrefixExpression(
                 prefix_expr.token,
@@ -102,17 +112,10 @@ pub fn eval(self: *Evaluator, node: Ast.Node, environment: *Environment) Error!C
         .IfExpression => |if_expr| {
             return try self.evalIfExpression(if_expr, environment);
         },
-        .FunctionLiteral => |function_literal| {
-            environment.incRef();
-            return .{ .Value = .{ .Function = .{
-                .parameters = function_literal.parameters,
-                .body = function_literal.body,
-                .environment = environment,
-            } } };
-        },
         .CallExpression => |call_expr| {
             return try self.evalCallExpression(call_expr, environment);
         },
+        .IndexExpression => {},
     }
 
     return NULL;

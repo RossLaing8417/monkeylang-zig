@@ -27,7 +27,7 @@ pub fn loop(self: *Repl) !void {
     var out_stream = self.out_file.writer();
 
     var environment = try Environment.init(self.allocator);
-    defer environment.deinit(self.allocator);
+    defer environment.decRef();
 
     var evaluator = try Evaluator.init(self.allocator);
     defer evaluator.deinit();
@@ -79,8 +79,10 @@ pub fn loop(self: *Repl) !void {
 
         try ast_store.append(ast);
 
-        const result = try evaluator.evalAst(&ast, environment);
-        if (result != .Literal or result == .Literal and result.Literal != .Function) {
+        var result = try evaluator.evalAst(&ast, environment);
+        defer result.deinit(self.allocator);
+
+        if (result != .Value or result == .Value and result.Value != .Function) {
             out_buffer.shrinkRetainingCapacity(0);
             try result.inspect(&out_buffer);
             try out_stream.writeAll(out_buffer.items);

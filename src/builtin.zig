@@ -4,7 +4,7 @@ const Evaluator = @import("evaluator.zig");
 const ObjectType = @import("object.zig");
 
 const BuiltinFunction = ObjectType.BuiltinFunction;
-const Object = ObjectType.Object;
+const Object = ObjectType.Container;
 
 const Error = std.mem.Allocator.Error;
 
@@ -22,9 +22,9 @@ fn len(evaluator: *Evaluator, objects: []const Object) Error!Object {
         );
     }
 
-    std.debug.assert(objects[0] == .Literal);
+    std.debug.assert(objects[0] == .Value);
 
-    const arg = objects[0].Literal;
+    const arg = objects[0].Value;
 
     if (arg == .String) {
         const string = arg.String.value;
@@ -35,7 +35,7 @@ fn len(evaluator: *Evaluator, objects: []const Object) Error!Object {
             }
             result += 1;
         }
-        return .{ .Literal = .{ .Integer = .{ .value = result } } };
+        return .{ .Value = .{ .Integer = .{ .value = result } } };
     }
 
     return try evaluator.evalError(

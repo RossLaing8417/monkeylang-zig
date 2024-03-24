@@ -5,29 +5,31 @@ const Environment = @import("environment.zig");
 const Evaluator = @import("evaluator.zig");
 const Builtin = @import("builtin.zig");
 
-pub const Object = union(enum) {
-    Literal: Literal,
-    ReturnValue: Literal,
+pub const Container = union(enum) {
+    Value: Value,
+    ReturnValue: Value,
     BuiltinFunction: BuiltinFunction,
     Error: Error,
 
-    pub fn inspect(self: *const Object, buffer: *std.ArrayList(u8)) !void {
+    pub fn deinit(self: *Container, allocator: std.mem.Allocator) void {
         switch (self.*) {
-            inline else => |object| try object.inspect(buffer),
+            .BuiltinFunction => {},
+            inline else => |*container| container.deinit(allocator),
         }
     }
-};
 
-pub const Literal = union(enum) {
-    Integer: Integer,
-    Boolean: Boolean,
-    String: String,
-    Function: Function,
-    Null: Null,
+    pub fn copy(self: *Container, allocator: std.mem.Allocator) !Container {
+        return switch (self.*) {
+            .Value => |*value| .{ .Value = try value.copy(allocator) },
+            .ReturnValue => |*literal| .{ .ReturnValue = try literal.copy(allocator) },
+            .BuiltinFunction => unreachable,
+            .Error => |*err| .{ .Error = try err.copy(allocator) },
+        };
+    }
 
-    pub fn inspect(self: *const Literal, buffer: *std.ArrayList(u8)) !void {
+    pub fn inspect(self: *const Container, buffer: *std.ArrayList(u8)) !void {
         switch (self.*) {
-            inline else => |literal| try literal.inspect(buffer),
+            inline else => |container| try container.inspect(buffer),
         }
     }
 };
@@ -35,8 +37,64 @@ pub const Literal = union(enum) {
 pub const Error = struct {
     value: []const u8,
 
+    pub fn deinit(self: *Error, allocator: std.mem.Allocator) void {
+        allocator.free(self.value);
+    }
+
+    pub fn copy(self: *Error, allocator: std.mem.Allocator) !Error {
+        return .{ .value = try allocator.dupe(u8, self.value) };
+    }
+
     pub fn inspect(self: *const Error, buffer: *std.ArrayList(u8)) !void {
         try buffer.writer().print("ERROR {s}", .{self.value});
+    }
+};
+
+pub const BuiltinFunction = struct {
+    name: []const u8,
+    func: Builtin.Function,
+
+    pub fn inspect(self: *const BuiltinFunction, buffer: *std.ArrayList(u8)) !void {
+        try buffer.writer().print("@{s}(...args)", .{self.name});
+    }
+};
+
+pub const Value = union(enum) {
+    Null: Null,
+
+    Integer: Integer,
+    Boolean: Boolean,
+    String: String,
+
+    Array: Array,
+    Function: Function,
+
+    pub fn deinit(self: *Value, allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            .Null, .Integer, .Boolean => {},
+            inline else => |*value| value.deinit(allocator),
+        }
+    }
+
+    pub fn copy(self: *Value, allocator: std.mem.Allocator) !Value {
+        return switch (self.*) {
+            .String => |*string| .{ .String = try string.copy(allocator) },
+            .Array => |*array| .{ .Array = try array.copy(allocator) },
+            .Function => |*function| .{ .Function = try function.copy(allocator) },
+            else => self.*,
+        };
+    }
+
+    pub fn inspect(self: *const Value, buffer: *std.ArrayList(u8)) !void {
+        switch (self.*) {
+            inline else => |literal| try literal.inspect(buffer),
+        }
+    }
+};
+
+pub const Null = struct {
+    pub fn inspect(_: *const Null, buffer: *std.ArrayList(u8)) !void {
+        try buffer.writer().writeAll("null");
     }
 };
 
@@ -58,6 +116,24 @@ pub const Boolean = struct {
 
 pub const String = struct {
     value: []const u8,
+    owned: bool,
+
+    pub fn initMerge(allocator: std.mem.Allocator, first: []const u8, second: []const u8) !String {
+        var buffer = try allocator.alloc(u8, first.len + second.len);
+        std.mem.copyForwards(u8, buffer, first);
+        std.mem.copyForwards(u8, buffer[first.len..], second);
+        return .{ .value = buffer, .owned = true };
+    }
+
+    pub fn deinit(self: *String, allocator: std.mem.Allocator) void {
+        if (self.owned) {
+            allocator.free(self.value);
+        }
+    }
+
+    pub fn copy(self: *String, allocator: std.mem.Allocator) !String {
+        return .{ .value = try allocator.dupe(u8, self.value), .owned = true };
+    }
 
     pub fn inspect(self: *const String, buffer: *std.ArrayList(u8)) !void {
         var writer = buffer.writer();
@@ -71,10 +147,60 @@ pub const String = struct {
     }
 };
 
+pub const Array = struct {
+    values: []Value,
+
+    pub fn initAppend(allocator: std.mem.Allocator, from: []const Value, value: Value) !Array {
+        var values = try allocator.alloc(Value, from.len + 1);
+        values[from.len] = value;
+    }
+
+    pub fn deinit(self: *Array, allocator: std.mem.Allocator) void {
+        for (self.values) |*value| {
+            switch (value.*) {
+                .String => |*string| string.deinit(allocator),
+                .Array => |*array| array.deinit(allocator),
+                .Function => |*function| function.deinit(allocator),
+                else => {},
+            }
+        }
+        allocator.free(self.values);
+    }
+
+    pub fn copy(self: *Array, allocator: std.mem.Allocator) std.mem.Allocator.Error!Array {
+        var values = try allocator.alloc(Value, self.values.len);
+        for (values, self.values) |*to, *from| {
+            to.* = try from.copy(allocator);
+        }
+        return .{ .values = values };
+    }
+
+    pub fn inspect(self: *const Array, buffer: *std.ArrayList(u8)) std.mem.Allocator.Error!void {
+        var writer = buffer.writer();
+        try writer.writeByte('[');
+        for (self.values, 0..) |value, i| {
+            if (i > 0) {
+                try writer.writeAll(", ");
+            }
+            try value.inspect(buffer);
+        }
+        try writer.writeByte(']');
+    }
+};
+
 pub const Function = struct {
     parameters: []const *Ast.Identifier,
     body: *Ast.BlockStatement,
     environment: *Environment,
+
+    pub fn deinit(self: *Function, _: std.mem.Allocator) void {
+        self.environment.decRef();
+    }
+
+    pub fn copy(self: *Function, _: std.mem.Allocator) !Function {
+        self.environment.incRef();
+        return self.*;
+    }
 
     pub fn inspect(self: *const Function, buffer: *std.ArrayList(u8)) !void {
         var writer = buffer.writer();
@@ -91,21 +217,5 @@ pub const Function = struct {
         try writer.writeAll(")");
 
         try self.body.write(buffer, .none);
-    }
-};
-
-pub const BuiltinFunction = struct {
-    name: []const u8,
-    func: Builtin.Function,
-
-    pub fn inspect(self: *const BuiltinFunction, buffer: *std.ArrayList(u8)) !void {
-        var writer = buffer.writer();
-        try writer.print("@{s}(...args)", .{self.name});
-    }
-};
-
-pub const Null = struct {
-    pub fn inspect(_: *const Null, buffer: *std.ArrayList(u8)) !void {
-        try buffer.writer().writeAll("null");
     }
 };

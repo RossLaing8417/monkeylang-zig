@@ -85,7 +85,9 @@ pub fn eval(self: *Evaluator, node: Ast.Node, environment: *Environment) Error!C
                 .environment = environment,
             } } };
         },
-        .ArrayLiteral => {},
+        .ArrayLiteral => |array_literal| {
+            return try self.evalArrayLiteral(array_literal.elements, environment);
+        },
 
         .PrefixExpression => |prefix_expr| {
             return try self.evalPrefixExpression(
@@ -115,7 +117,9 @@ pub fn eval(self: *Evaluator, node: Ast.Node, environment: *Environment) Error!C
         .CallExpression => |call_expr| {
             return try self.evalCallExpression(call_expr, environment);
         },
-        .IndexExpression => {},
+        .IndexExpression => |index_expr| {
+            return try self.evalIndexExpression(index_expr, environment);
+        },
     }
 
     return NULL;
@@ -161,6 +165,27 @@ fn evalIdentifier(self: *Evaluator, identifier: *const Ast.Identifier, environme
     }
 
     return try self.evalError("Unknown identifier: '{s}'", .{identifier.value});
+}
+
+fn evalArrayLiteral(self: *Evaluator, elements: []const Ast.Node, environment: *Environment) !Container {
+    var results = try std.ArrayList(Object.Value).initCapacity(self.allocator, elements.len);
+    defer {
+        for (results.items) |*result| {
+            result.deinit(self.allocator);
+        }
+        results.deinit();
+    }
+
+    for (elements) |element| {
+        var result = try self.eval(element, environment);
+        if (result == .Error) {
+            return result;
+        }
+        std.debug.assert(result == .Value);
+        try results.append(result.Value);
+    }
+
+    return .{ .Value = .{ .Array = .{ .values = try results.toOwnedSlice() } } };
 }
 
 fn evalPrefixExpression(self: *Evaluator, operator: Lexer.Token, operand: Container) !Container {
@@ -309,7 +334,7 @@ fn evalIfExpression(self: *Evaluator, if_expr: *const Ast.IfExpression, environm
 
 fn evalCallExpression(self: *Evaluator, call_expr: *const Ast.CallExpression, environment: *Environment) !Container {
     var function = blk: {
-        const result = try self.eval(call_expr.function, environment);
+        var result = try self.eval(call_expr.function, environment);
         if (result == .Error) {
             return result;
         }
@@ -321,6 +346,7 @@ fn evalCallExpression(self: *Evaluator, call_expr: *const Ast.CallExpression, en
         std.debug.assert(result != .ReturnValue);
 
         if (result.Value != .Function) {
+            defer result.deinit(self.allocator);
             return self.evalError(
                 "Call expression type mismatch. Expected 'Function' but found '{s}'",
                 .{@tagName(result.Value)},
@@ -357,6 +383,59 @@ fn evalCallExpression(self: *Evaluator, call_expr: *const Ast.CallExpression, en
     defer result.deinit(self.allocator);
 
     return result.copy(self.allocator);
+}
+
+fn evalIndexExpression(self: *Evaluator, index_expr: *const Ast.IndexExpression, environment: *Environment) !Container {
+    var array = blk: {
+        var result = try self.eval(index_expr.expression, environment);
+        if (result == .Error) {
+            return result;
+        }
+
+        std.debug.assert(result != .ReturnValue);
+
+        if (result.Value != .Array) {
+            defer result.deinit(self.allocator);
+            return self.evalError(
+                "Index expression type mismatch. Expected 'Array' but found '{s}'",
+                .{@tagName(result.Value)},
+            );
+        }
+
+        break :blk result.Value.Array;
+    };
+
+    defer if (index_expr.expression != .Identifier) {
+        array.deinit(self.allocator);
+    };
+
+    var index = blk: {
+        var result = try self.eval(index_expr.index, environment);
+        if (result == .Error) {
+            return result;
+        }
+
+        std.debug.assert(result == .Value);
+
+        if (result.Value != .Integer) {
+            defer result.deinit(self.allocator);
+            return self.evalError(
+                "Index expression type mismatch. Expected 'Integer' but found '{s}'",
+                .{@tagName(result)},
+            );
+        }
+
+        if (result.Value.Integer.value < 0 or result.Value.Integer.value >= array.values.len) {
+            return self.evalError(
+                "Index {d} out of bounds for array of length {d}",
+                .{ result.Value.Integer.value, array.values.len },
+            );
+        }
+
+        break :blk result.Value.Integer;
+    };
+
+    return .{ .Value = try array.values[@intCast(index.value)].copy(self.allocator) };
 }
 
 fn evalBuiltinFunction(self: *Evaluator, builtin: Object.BuiltinFunction, arguments: []const Ast.Node, environment: *Environment) !Container {
@@ -646,6 +725,8 @@ test "Eval Error Handling" {
             ,
             .expected = .{ .Error = .{ .value = "Invalid operation: 'String' - 'String'" } },
         },
+        .{ .input = "[1, 2, 3][3]", .expected = .{ .Error = .{ .value = "Index 3 out of bounds for array of length 3" } } },
+        .{ .input = "[1, 2, 3][-1]", .expected = .{ .Error = .{ .value = "Index -1 out of bounds for array of length 3" } } },
     };
 
     var allocator = std.testing.allocator;
@@ -829,6 +910,69 @@ test "Eval Closure" {
     var result = try evaluator.evalAst(&ast, environment);
     defer result.deinit(allocator);
     try expectEqualObjects(expected, result);
+}
+
+test "Eval Array Literal" {
+    const input = [_]TestInput{
+        .{ .input = "[1, 2 * 2, 3 + 3]", .expected = .{
+            .Value = .{
+                .Array = .{ .values = @constCast(&[_]Object.Value{
+                    .{ .Integer = .{ .value = 1 } },
+                    .{ .Integer = .{ .value = 4 } },
+                    .{ .Integer = .{ .value = 6 } },
+                }) },
+            },
+        } },
+    };
+
+    var allocator = std.testing.allocator;
+    var evaluator = try Evaluator.init(allocator);
+    defer evaluator.deinit();
+
+    for (input) |test_input| {
+        var ast = try Ast.parse(allocator, test_input.input);
+        defer ast.deinit(allocator);
+
+        try testAst(&ast);
+
+        var environment = try Environment.init(allocator);
+        defer environment.decRef();
+
+        var result = try evaluator.evalAst(&ast, environment);
+        defer result.deinit(allocator);
+        try expectEqualObjects(test_input.expected, result);
+    }
+}
+
+test "Eval Index Expression" {
+    const input = [_]TestInput{
+        .{ .input = "[1, 2, 3][0]", .expected = .{ .Value = .{ .Integer = .{ .value = 1 } } } },
+        .{ .input = "[1, 2, 3][1]", .expected = .{ .Value = .{ .Integer = .{ .value = 2 } } } },
+        .{ .input = "[1, 2, 3][2]", .expected = .{ .Value = .{ .Integer = .{ .value = 3 } } } },
+        .{ .input = "let i = 0; [1][i];", .expected = .{ .Value = .{ .Integer = .{ .value = 1 } } } },
+        .{ .input = "[1, 2, 3][1 + 1];", .expected = .{ .Value = .{ .Integer = .{ .value = 3 } } } },
+        .{ .input = "let myArray = [1, 2, 3]; myArray[2];", .expected = .{ .Value = .{ .Integer = .{ .value = 3 } } } },
+        .{ .input = "let myArray = [1, 2, 3]; myArray[0] + myArray[1] + myArray[2];", .expected = .{ .Value = .{ .Integer = .{ .value = 6 } } } },
+        .{ .input = "let myArray = [1, 2, 3]; let i = myArray[0]; myArray[i]", .expected = .{ .Value = .{ .Integer = .{ .value = 2 } } } },
+    };
+
+    var allocator = std.testing.allocator;
+    var evaluator = try Evaluator.init(allocator);
+    defer evaluator.deinit();
+
+    for (input) |test_input| {
+        var ast = try Ast.parse(allocator, test_input.input);
+        defer ast.deinit(allocator);
+
+        try testAst(&ast);
+
+        var environment = try Environment.init(allocator);
+        defer environment.decRef();
+
+        var result = try evaluator.evalAst(&ast, environment);
+        defer result.deinit(allocator);
+        try expectEqualObjects(test_input.expected, result);
+    }
 }
 
 const TestError = error{ TestExpectedEqual, TestUnexpectedResult };

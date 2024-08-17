@@ -8,5 +8,4 @@ There may be some questionable snippets of code :)
 See [https://interpreterbook.com](https://interpreterbook.com) and [https://compilerbook.com](https://compilerbook.com)
 
 # TODO
-- [ ] Fix memory management for arrays (getting seg fault and double free)
 - [ ] Complete the final chapter, Hashes

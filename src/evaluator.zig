@@ -987,15 +987,15 @@ test "Eval Closure" {
 
 test "Eval Arrays" {
     const input = [_]TestInput{
-        // .{ .input = "[1, 2 * 2, 3 + 3]", .expected = .{
-        //     .Value = .{
-        //         .Array = .{ .values = @constCast(&[_]Object.Value{
-        //             .{ .Integer = .{ .value = 1 } },
-        //             .{ .Integer = .{ .value = 4 } },
-        //             .{ .Integer = .{ .value = 6 } },
-        //         }) },
-        //     },
-        // } },
+        .{ .input = "[1, 2 * 2, 3 + 3]", .expected = .{
+            .Value = .{
+                .Array = .{ .values = @constCast(&[_]Object.Value{
+                    .{ .Integer = .{ .value = 1 } },
+                    .{ .Integer = .{ .value = 4 } },
+                    .{ .Integer = .{ .value = 6 } },
+                }) },
+            },
+        } },
         .{
             .input =
             \\let map = fn(arr, f) {
@@ -1022,6 +1022,29 @@ test "Eval Arrays" {
                             .{ .Integer = .{ .value = 8 } },
                         }),
                     },
+                },
+            },
+        },
+        .{
+            .input =
+            \\let reduce = fn(arr, initial, f) {
+            \\    let itr = fn(arr, result) {
+            \\        if (len(arr) == 0) {
+            \\            result;
+            \\        } else {
+            \\            itr(rest(arr), f(result, first(arr)));
+            \\        }
+            \\    };
+            \\    itr(arr, initial);
+            \\};
+            \\let sum = fn(arr) {
+            \\    reduce(arr, 0, fn(initial, el) { initial + el; });
+            \\};
+            \\sum([1, 2, 3, 4, 5]);
+            ,
+            .expected = .{
+                .Value = .{
+                    .Integer = .{ .value = 15 },
                 },
             },
         },

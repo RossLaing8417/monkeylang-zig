@@ -438,9 +438,9 @@ pub const IfExpression = struct {
     }
 
     pub fn write(self: *const IfExpression, writer: std.io.AnyWriter, option: Node.WriteOption) !void {
-        try writer.writeAll("if ");
+        try writer.writeAll("if (");
         try self.condition.write(writer, option);
-        try writer.writeAll(" ");
+        try writer.writeAll(") ");
         try self.consequence.write(writer, option);
         if (self.alternative) |alternative| {
             try writer.writeAll("else ");

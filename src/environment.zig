@@ -46,8 +46,6 @@ pub fn deinit(self: *Environment) void {
 
 pub fn incRef(self: *Environment) void {
     self.ref_count += 1;
-    // std.debug.print("REF: {*} -> {d} ({d})\n", .{ self, self.ref_count, self.local_functions });
-    // std.debug.dumpCurrentStackTrace(null);
 }
 
 pub fn decRef(self: *Environment) void {
@@ -55,8 +53,6 @@ pub fn decRef(self: *Environment) void {
         return;
     }
     self.ref_count -= 1;
-    // std.debug.print("REF: {*} -> {d} ({d})\n", .{ self, self.ref_count, self.local_functions });
-    // std.debug.dumpCurrentStackTrace(null);
     if (self.ref_count == 0) {
         self.deinit();
     } else if (self.ref_count == self.local_functions) {

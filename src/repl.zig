@@ -44,13 +44,13 @@ pub fn loop(self: *Repl) !void {
     var out_buffer = std.ArrayList(u8).init(self.allocator);
     defer out_buffer.deinit();
 
+    var in_buffer = std.ArrayList(u8).init(self.allocator);
+    defer in_buffer.deinit();
+
+    const writer = in_buffer.writer();
+
     while (true) {
         _ = try out_stream.write(PROMPT);
-
-        var in_buffer = std.ArrayList(u8).init(self.allocator);
-        defer in_buffer.deinit();
-
-        const writer = in_buffer.writer();
 
         in_stream.streamUntilDelimiter(writer, '\n', null) catch |err| switch (err) {
             error.EndOfStream => break,

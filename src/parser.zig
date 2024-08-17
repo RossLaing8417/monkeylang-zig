@@ -44,8 +44,6 @@ fn parseStatement(self: *Parser) Error!Node {
 }
 
 fn parseExpression(self: *Parser, precedence: Precedence) Error!Node {
-    // std.debug.print("TOKEN EXPR: {s} ({s})\n", .{ @tagName(self.tokens[self.tok_i].type), self.tokens[self.tok_i].literal });
-
     var left_operand = switch (self.tokens[self.tok_i].type) {
         .Identifier => try self.parseIdentifier(),
         .Integer => try self.parseInteger(),
@@ -64,10 +62,7 @@ fn parseExpression(self: *Parser, precedence: Precedence) Error!Node {
     while (true) {
         const token = self.tokens[self.tok_i];
 
-        // std.debug.print("TOKEN PREC: {s} -> {s} vs {s}\n", .{ @tagName(token.type), @tagName(precedence), @tagName(tokenPrecedence(token)) });
-
         if (self.currentTokenIs(.SemiColon) or @intFromEnum(precedence) >= @intFromEnum(tokenPrecedence(token))) {
-            // std.debug.print("GTFO!\n", .{});
             break;
         }
 
@@ -390,11 +385,6 @@ fn currentTokenIs(self: *Parser, token_type: Token.Type) bool {
     return self.tokens[self.tok_i].type == token_type;
 }
 
-// fn peekTokenIs(self: *Parser, token_type: Token.Type) bool {
-//     std.debug.assert(self.tok_i + 1 < self.tokens.len);
-//     return self.tokens[self.tok_i + 1].type == token_type;
-// }
-
 fn tokenPrecedence(token: Token) Precedence {
     return switch (token.type) {
         .Equal => .Equals,
@@ -454,10 +444,6 @@ test "Let Statement" {
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
 
-    // var buffer = try ast.write(allocator);
-    // defer allocator.free(buffer);
-    // std.debug.print("Let Statements:\n{s}\n", .{buffer});
-
     try testAst(&expected, &ast);
 }
 
@@ -492,10 +478,6 @@ test "Return Statement" {
     const allocator = std.testing.allocator;
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
-
-    // var buffer = try ast.write(allocator);
-    // defer allocator.free(buffer);
-    // std.debug.print("Return Statements:\n{s}\n", .{buffer});
 
     try testAst(&expected, &ast);
 }
@@ -532,10 +514,6 @@ test "Prefix Operators" {
     const allocator = std.testing.allocator;
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
-
-    // var buffer = try ast.write(allocator);
-    // defer allocator.free(buffer);
-    // std.debug.print("Prefix Operators:\n{s}\n", .{buffer});
 
     try testAst(&expected, &ast);
 }
@@ -630,10 +608,6 @@ test "Infix Operators" {
     const allocator = std.testing.allocator;
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
-
-    // var buffer = try ast.write(allocator);
-    // defer allocator.free(buffer);
-    // std.debug.print("Infix Operators:\n{s}\n", .{buffer});
 
     try testAst(&expected, &ast);
 }
@@ -731,10 +705,6 @@ test "If Expression" {
     const allocator = std.testing.allocator;
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
-
-    // var buffer = try ast.write(allocator);
-    // defer allocator.free(buffer);
-    // std.debug.print("If Expressions:\n{s}\n", .{buffer});
 
     try testAst(&expected, &ast);
 }
@@ -927,7 +897,6 @@ fn expectEqualNodeSlices(expected_nodes: []const Node, actual_nodes: []const Nod
 
 fn expectEqualNodes(expected: Node, actual: Node) TestError!void {
     try std.testing.expectEqualStrings(@tagName(expected), @tagName(actual));
-    // try std.testing.expectEqual(@intFromEnum(expected), @intFromEnum(actual));
     switch (expected) {
         // Statements
         .LetStatement => |node| try expectEqualLetStatements(node, actual.LetStatement),

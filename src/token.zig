@@ -46,7 +46,7 @@ pub const Type = enum {
     Return,
 };
 
-const map = std.ComptimeStringMap(Type, .{
+const map = std.StaticStringMap(Type).initComptime(.{
     .{ "fn", .Function },
     .{ "let", .Let },
     .{ "true", .True },

@@ -17,7 +17,7 @@ const NULL = Container{ .Value = .{ .Null = .{} } };
 allocator: std.mem.Allocator,
 
 pub fn init(allocator: std.mem.Allocator) !*Evaluator {
-    var evaluator = try allocator.create(Evaluator);
+    const evaluator = try allocator.create(Evaluator);
     evaluator.* = .{
         .allocator = allocator,
     };
@@ -147,7 +147,7 @@ fn evalLetStatement(self: *Evaluator, let_statement: *const Ast.LetStatement, en
 }
 
 fn evalReturnStatement(self: *Evaluator, return_statement: *const Ast.ReturnStatement, environment: *Environment) !Container {
-    var result = try self.eval(return_statement.return_value, environment);
+    const result = try self.eval(return_statement.return_value, environment);
     switch (result) {
         .Value => |literal| return .{ .ReturnValue = literal },
         .Error => return result,
@@ -177,7 +177,7 @@ fn evalArrayLiteral(self: *Evaluator, elements: []const Ast.Node, environment: *
     }
 
     for (elements) |element| {
-        var result = try self.eval(element, environment);
+        const result = try self.eval(element, environment);
         if (result == .Error) {
             return result;
         }
@@ -409,7 +409,7 @@ fn evalIndexExpression(self: *Evaluator, index_expr: *const Ast.IndexExpression,
         array.deinit(self.allocator);
     };
 
-    var index = blk: {
+    const index = blk: {
         var result = try self.eval(index_expr.index, environment);
         if (result == .Error) {
             return result;
@@ -450,7 +450,7 @@ fn evalBuiltinFunction(self: *Evaluator, builtin: Object.BuiltinFunction, argume
     }
 
     for (args, arguments) |*arg, argument| {
-        var result = try self.eval(argument, environment);
+        const result = try self.eval(argument, environment);
         if (result == .Error) {
             return result;
         }
@@ -506,7 +506,7 @@ test "Eval Integer Expression" {
         .{ .input = "(5 + 10 * 2 + 15 / 3) * 2 + -10", .expected = .{ .Value = .{ .Integer = .{ .value = 50 } } } },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var evaluator = try Evaluator.init(allocator);
     defer evaluator.deinit();
 
@@ -550,7 +550,7 @@ test "Eval Boolean Expression" {
         .{ .input = "(1 > 2) == false", .expected = .{ .Value = .{ .Boolean = .{ .value = true } } } },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var evaluator = try Evaluator.init(allocator);
     defer evaluator.deinit();
 
@@ -579,7 +579,7 @@ test "Eval Bang Operator" {
         .{ .input = "!!5", .expected = .{ .Value = .{ .Boolean = .{ .value = true } } } },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var evaluator = try Evaluator.init(allocator);
     defer evaluator.deinit();
 
@@ -620,7 +620,7 @@ test "Eval Strings" {
         },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var evaluator = try Evaluator.init(allocator);
     defer evaluator.deinit();
 
@@ -650,7 +650,7 @@ test "Eval If Else Expression" {
         .{ .input = "if (1 < 2) { 10 } else { 20 }", .expected = .{ .Value = .{ .Integer = .{ .value = 10 } } } },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var evaluator = try Evaluator.init(allocator);
     defer evaluator.deinit();
 
@@ -688,7 +688,7 @@ test "Eval Return Statement" {
         },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var evaluator = try Evaluator.init(allocator);
     defer evaluator.deinit();
 
@@ -736,7 +736,7 @@ test "Eval Error Handling" {
         .{ .input = "[1, 2, 3][-1]", .expected = .{ .Error = .{ .value = "Index -1 out of bounds for array of length 3" } } },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var evaluator = try Evaluator.init(allocator);
     defer evaluator.deinit();
 
@@ -763,7 +763,7 @@ test "Eval Let Statement" {
         .{ .input = "let a = 5; let b = a; let c = a + b + 5; c;", .expected = .{ .Value = .{ .Integer = .{ .value = 15 } } } },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var evaluator = try Evaluator.init(allocator);
     defer evaluator.deinit();
 
@@ -785,7 +785,7 @@ test "Eval Let Statement" {
 test "Eval Function Value" {
     const input = "fn(x) { x + 2; }";
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
 
@@ -819,7 +819,7 @@ test "Eval Call Expression" {
         .{ .input = "fn(x) { x; }(5)", .expected = .{ .Value = .{ .Integer = .{ .value = 5 } } } },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var evaluator = try Evaluator.init(allocator);
     defer evaluator.deinit();
 
@@ -878,7 +878,7 @@ test "Eval Builtins" {
         },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var evaluator = try Evaluator.init(allocator);
     defer evaluator.deinit();
 
@@ -906,7 +906,7 @@ test "Eval Closure" {
         \\addTwo(2);
     ;
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
 
@@ -938,7 +938,7 @@ test "Eval Array Literal" {
         } },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var evaluator = try Evaluator.init(allocator);
     defer evaluator.deinit();
 
@@ -969,7 +969,7 @@ test "Eval Index Expression" {
         .{ .input = "let myArray = [1, 2, 3]; let i = myArray[0]; myArray[i]", .expected = .{ .Value = .{ .Integer = .{ .value = 2 } } } },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var evaluator = try Evaluator.init(allocator);
     defer evaluator.deinit();
 

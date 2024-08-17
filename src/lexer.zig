@@ -22,7 +22,7 @@ pub fn init(input: []const u8) Lexer {
 pub fn nextToken(self: *Lexer) Token {
     self.skipWhiteSpace();
 
-    var token: Token = switch (self.ch) {
+    const token: Token = switch (self.ch) {
         '=' => blk: {
             if (self.peekChar() == '=') {
                 self.readChar();
@@ -90,7 +90,7 @@ fn readChar(self: *Lexer) void {
 }
 
 fn readIdentifier(self: *Lexer) []const u8 {
-    var position = self.position;
+    const position = self.position;
 
     while (std.ascii.isAlphabetic(self.ch)) {
         self.readChar();
@@ -100,7 +100,7 @@ fn readIdentifier(self: *Lexer) []const u8 {
 }
 
 fn readNumber(self: *Lexer) []const u8 {
-    var position = self.position;
+    const position = self.position;
 
     while (std.ascii.isDigit(self.ch)) {
         self.readChar();
@@ -113,7 +113,7 @@ fn readString(self: *Lexer) []const u8 {
     // Read the starting "
     self.readChar();
 
-    var start = self.position;
+    const start = self.position;
 
     while (self.ch != '"') {
         if (self.ch == '\\' and self.peekChar() == '"') {

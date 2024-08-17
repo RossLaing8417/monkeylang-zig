@@ -192,7 +192,7 @@ pub const Array = struct {
     }
 
     pub fn initCopy(allocator: std.mem.Allocator, from: []const Value) !Array {
-        var values = try allocator.alloc(Value, from.len);
+        const values = try allocator.alloc(Value, from.len);
         for (values, from) |value, val| {
             value.* = try val.copy(allocator);
         }
@@ -212,7 +212,7 @@ pub const Array = struct {
     }
 
     pub fn copy(self: *const Array, allocator: std.mem.Allocator) std.mem.Allocator.Error!Array {
-        var values = try allocator.alloc(Value, self.values.len);
+        const values = try allocator.alloc(Value, self.values.len);
         for (values, self.values) |*to, from| {
             to.* = try from.copy(allocator);
         }

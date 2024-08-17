@@ -50,7 +50,7 @@ pub fn loop(self: *Repl) !void {
         var in_buffer = std.ArrayList(u8).init(self.allocator);
         defer in_buffer.deinit();
 
-        var writer = in_buffer.writer();
+        const writer = in_buffer.writer();
 
         in_stream.streamUntilDelimiter(writer, '\n', null) catch |err| switch (err) {
             error.EndOfStream => break,

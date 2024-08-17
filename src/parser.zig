@@ -99,7 +99,7 @@ fn parseExpression(self: *Parser, precedence: Precedence) Error!Node {
 }
 
 fn parseGroupedExpression(self: *Parser) Error!Node {
-    var grouped_expression = try self.allocator.create(Ast.GroupedExpression);
+    const grouped_expression = try self.allocator.create(Ast.GroupedExpression);
 
     grouped_expression.* = .{
         .token = try self.expectToken(.LeftParen),
@@ -148,7 +148,7 @@ fn parseCallExpression(self: *Parser, function: Node) Error!Node {
 
     _ = try self.expectToken(.RightParen);
 
-    var call_expression = try self.allocator.create(Ast.CallExpression);
+    const call_expression = try self.allocator.create(Ast.CallExpression);
     call_expression.* = .{
         .token = token,
         .function = function,
@@ -164,7 +164,7 @@ fn parseIndexExpression(self: *Parser, expression: Node) Error!Node {
 
     _ = try self.expectToken(.RightBracket);
 
-    var index_expression = try self.allocator.create(Ast.IndexExpression);
+    const index_expression = try self.allocator.create(Ast.IndexExpression);
     index_expression.* = .{
         .token = token,
         .expression = expression,
@@ -186,7 +186,7 @@ fn parseBlockStatement(self: *Parser) Error!Node {
 
     _ = try self.expectToken(.RightBrace);
 
-    var block_statement = try self.allocator.create(Ast.BlockStatement);
+    const block_statement = try self.allocator.create(Ast.BlockStatement);
     block_statement.* = .{
         .token = token,
         .statements = try statements.toOwnedSlice(),
@@ -210,7 +210,7 @@ fn parseLetStatement(self: *Parser) Error!Node {
 }
 
 fn parseReturnStatement(self: *Parser) Error!Node {
-    var return_statement = try self.allocator.create(Ast.ReturnStatement);
+    const return_statement = try self.allocator.create(Ast.ReturnStatement);
     return_statement.* = .{
         .token = try self.expectToken(.Return),
         .return_value = try self.parseExpression(.Lowest),
@@ -220,7 +220,7 @@ fn parseReturnStatement(self: *Parser) Error!Node {
 }
 
 fn parseExpressionStatement(self: *Parser) Error!Node {
-    var expr_statement = try self.allocator.create(Ast.ExpressionStatement);
+    const expr_statement = try self.allocator.create(Ast.ExpressionStatement);
     expr_statement.* = Ast.ExpressionStatement{
         .token = self.tokens[self.tok_i],
         .expression = try self.parseExpression(.Lowest),
@@ -232,7 +232,7 @@ fn parseExpressionStatement(self: *Parser) Error!Node {
 fn parseIdentifier(self: *Parser) Error!Node {
     const token = try self.expectToken(.Identifier);
 
-    var identifier = try self.allocator.create(Ast.Identifier);
+    const identifier = try self.allocator.create(Ast.Identifier);
     identifier.* = Ast.Identifier{
         .token = token,
         .value = token.literal,
@@ -244,7 +244,7 @@ fn parseIdentifier(self: *Parser) Error!Node {
 fn parseInteger(self: *Parser) Error!Node {
     const token = try self.expectToken(.Integer);
 
-    var integer = try self.allocator.create(Ast.Integer);
+    const integer = try self.allocator.create(Ast.Integer);
     integer.* = Ast.Integer{
         .token = token,
         .value = try std.fmt.parseInt(i64, token.literal, 10),
@@ -257,7 +257,7 @@ fn parseBoolean(self: *Parser) Error!Node {
     const token = self.consumeToken(.True) orelse
         try self.expectToken(.False);
 
-    var boolean = try self.allocator.create(Ast.Boolean);
+    const boolean = try self.allocator.create(Ast.Boolean);
     boolean.* = Ast.Boolean{
         .token = token,
         .value = (token.type == .True),
@@ -269,7 +269,7 @@ fn parseBoolean(self: *Parser) Error!Node {
 fn parseString(self: *Parser) Error!Node {
     const token = try self.expectToken(.String);
 
-    var string = try self.allocator.create(Ast.String);
+    const string = try self.allocator.create(Ast.String);
     string.* = .{
         .token = token,
         .value = token.literal,
@@ -288,7 +288,7 @@ fn parseFunctionLiteral(self: *Parser) Error!Node {
     while (!self.currentTokenIs(.RightParen)) {
         const tok = try self.expectToken(.Identifier);
 
-        var identifier = try self.allocator.create(Ast.Identifier);
+        const identifier = try self.allocator.create(Ast.Identifier);
         identifier.* = Ast.Identifier{
             .token = tok,
             .value = tok.literal,
@@ -301,7 +301,7 @@ fn parseFunctionLiteral(self: *Parser) Error!Node {
 
     _ = try self.expectToken(.RightParen);
 
-    var function_literal = try self.allocator.create(Ast.FunctionLiteral);
+    const function_literal = try self.allocator.create(Ast.FunctionLiteral);
     function_literal.* = .{
         .token = token,
         .body = (try self.parseBlockStatement()).BlockStatement,
@@ -324,7 +324,7 @@ fn parseArrayLiteral(self: *Parser) Error!Node {
 
     _ = try self.expectToken(.RightBracket);
 
-    var array_literal = try self.allocator.create(Ast.ArrayLiteral);
+    const array_literal = try self.allocator.create(Ast.ArrayLiteral);
     array_literal.* = .{
         .token = token,
         .elements = try elements.toOwnedSlice(),
@@ -336,7 +336,7 @@ fn parseArrayLiteral(self: *Parser) Error!Node {
 fn parsePrefixExpression(self: *Parser) Error!Node {
     const token = self.nextToken();
 
-    var prefix_expression = try self.allocator.create(Ast.PrefixExpression);
+    const prefix_expression = try self.allocator.create(Ast.PrefixExpression);
     prefix_expression.* = Ast.PrefixExpression{
         .token = token,
         .operator = token.literal,
@@ -349,7 +349,7 @@ fn parsePrefixExpression(self: *Parser) Error!Node {
 fn parseInfixExpression(self: *Parser, left_operand: Node) Error!Node {
     const token = self.nextToken();
 
-    var infix_expression = try self.allocator.create(Ast.InfixExpression);
+    const infix_expression = try self.allocator.create(Ast.InfixExpression);
     infix_expression.* = Ast.InfixExpression{
         .token = token,
         .operator = token.literal,
@@ -450,7 +450,7 @@ test "Let Statement" {
         },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
 
@@ -489,7 +489,7 @@ test "Return Statement" {
         },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
 
@@ -529,7 +529,7 @@ test "Prefix Operators" {
         },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
 
@@ -627,7 +627,7 @@ test "Infix Operators" {
         },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
 
@@ -640,7 +640,7 @@ test "Infix Operators" {
 
 test "Operator Precedence" {
     const Test = struct { input: []const u8, expected: []const u8 };
-    var tests = [_]Test{
+    const tests = [_]Test{
         .{ .input = "-a * b", .expected = "((-a) * b)" },
         .{ .input = "!-a", .expected = "(!(-a))" },
         .{ .input = "a + b + c", .expected = "((a + b) + c)" },
@@ -668,7 +668,7 @@ test "Operator Precedence" {
         .{ .input = "add(a * b[2], b[1], 2 * [1, 2][1])", .expected = "add((a * (b[2])), (b[1]), (2 * ([1, 2][1])))" },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
 
@@ -728,7 +728,7 @@ test "If Expression" {
         },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
 
@@ -776,7 +776,7 @@ test "Function Literal" {
         },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
 
@@ -824,7 +824,7 @@ test "Call Expression" {
         },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
 
@@ -896,7 +896,7 @@ test "Arrays" {
         },
     };
 
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     var ast = try Ast.parse(allocator, input);
     defer ast.deinit(allocator);
 

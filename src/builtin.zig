@@ -12,7 +12,7 @@ pub const Function = (*const fn (*Evaluator, []const Container) Error!Container)
 
 const NULL = Container{ .Value = .{ .Null = .{} } };
 
-pub const FunctionMap = std.ComptimeStringMap(BuiltinFunction, .{
+pub const FunctionMap = std.StaticStringMap(BuiltinFunction).initComptime(.{
     .{ "len", BuiltinFunction{ .name = "len", .func = &len } },
     .{ "first", BuiltinFunction{ .name = "first", .func = &first } },
     .{ "last", BuiltinFunction{ .name = "last", .func = &last } },

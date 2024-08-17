@@ -646,6 +646,8 @@ test "Operator Precedence" {
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
 
+    const writer = buffer.writer().any();
+
     for (tests) |test_entry| {
         buffer.shrinkRetainingCapacity(0);
 
@@ -654,7 +656,7 @@ test "Operator Precedence" {
 
         try std.testing.expectEqual(@as(usize, 1), ast.nodes.len);
 
-        try ast.nodes[0].ExpressionStatement.expression.write(&buffer, .debug_precedence);
+        try ast.nodes[0].ExpressionStatement.expression.write(writer, .debug_precedence);
 
         try std.testing.expectEqualStrings(test_entry.expected, buffer.items);
     }

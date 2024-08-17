@@ -27,9 +27,9 @@ pub const Container = union(enum) {
         };
     }
 
-    pub fn inspect(self: *const Container, buffer: *std.ArrayList(u8)) !void {
+    pub fn inspect(self: *const Container, writer: std.io.AnyWriter) !void {
         switch (self.*) {
-            inline else => |container| try container.inspect(buffer),
+            inline else => |container| try container.inspect(writer),
         }
     }
 };
@@ -45,8 +45,8 @@ pub const Error = struct {
         return .{ .value = try allocator.dupe(u8, self.value) };
     }
 
-    pub fn inspect(self: *const Error, buffer: *std.ArrayList(u8)) !void {
-        try buffer.writer().print("ERROR {s}", .{self.value});
+    pub fn inspect(self: *const Error, writer: std.io.AnyWriter) !void {
+        try writer.print("ERROR {s}", .{self.value});
     }
 };
 
@@ -54,8 +54,8 @@ pub const BuiltinFunction = struct {
     name: []const u8,
     func: Builtin.Function,
 
-    pub fn inspect(self: *const BuiltinFunction, buffer: *std.ArrayList(u8)) !void {
-        try buffer.writer().print("@{s}(...args)", .{self.name});
+    pub fn inspect(self: *const BuiltinFunction, writer: std.io.AnyWriter) !void {
+        try writer.print("@{s}(...args)", .{self.name});
     }
 };
 
@@ -85,32 +85,32 @@ pub const Value = union(enum) {
         };
     }
 
-    pub fn inspect(self: *const Value, buffer: *std.ArrayList(u8)) !void {
+    pub fn inspect(self: *const Value, writer: std.io.AnyWriter) !void {
         switch (self.*) {
-            inline else => |literal| try literal.inspect(buffer),
+            inline else => |literal| try literal.inspect(writer),
         }
     }
 };
 
 pub const Null = struct {
-    pub fn inspect(_: *const Null, buffer: *std.ArrayList(u8)) !void {
-        try buffer.writer().writeAll("null");
+    pub fn inspect(_: *const Null, writer: std.io.AnyWriter) !void {
+        try writer.writeAll("null");
     }
 };
 
 pub const Integer = struct {
     value: i64,
 
-    pub fn inspect(self: *const Integer, buffer: *std.ArrayList(u8)) !void {
-        try buffer.writer().print("{}", .{self.value});
+    pub fn inspect(self: *const Integer, writer: std.io.AnyWriter) !void {
+        try writer.print("{}", .{self.value});
     }
 };
 
 pub const Boolean = struct {
     value: bool,
 
-    pub fn inspect(self: *const Boolean, buffer: *std.ArrayList(u8)) !void {
-        try buffer.writer().print("{}", .{self.value});
+    pub fn inspect(self: *const Boolean, writer: std.io.AnyWriter) !void {
+        try writer.print("{}", .{self.value});
     }
 };
 
@@ -135,8 +135,7 @@ pub const String = struct {
         return .{ .value = try allocator.dupe(u8, self.value), .owned = true };
     }
 
-    pub fn inspect(self: *const String, buffer: *std.ArrayList(u8)) !void {
-        var writer = buffer.writer();
+    pub fn inspect(self: *const String, writer: std.io.AnyWriter) !void {
         for (0..self.value.len) |i| {
             // Skipping the \ if it escapce a "
             if (self.value[i] == '\\' and self.value[i + 1] == '"') {
@@ -161,8 +160,7 @@ pub const Function = struct {
         return self.*;
     }
 
-    pub fn inspect(self: *const Function, buffer: *std.ArrayList(u8)) !void {
-        var writer = buffer.writer();
+    pub fn inspect(self: *const Function, writer: std.io.AnyWriter) !void {
         try writer.writeAll("fn (");
 
         for (self.parameters, 0..) |identifier, i| {
@@ -170,12 +168,12 @@ pub const Function = struct {
                 try writer.writeAll(", ");
             }
 
-            try identifier.write(buffer, .none);
+            try identifier.write(writer, .none);
         }
 
         try writer.writeAll(")");
 
-        try self.body.write(buffer, .none);
+        try self.body.write(writer, .none);
     }
 };
 
@@ -219,14 +217,13 @@ pub const Array = struct {
         return .{ .values = values };
     }
 
-    pub fn inspect(self: *const Array, buffer: *std.ArrayList(u8)) std.mem.Allocator.Error!void {
-        var writer = buffer.writer();
+    pub fn inspect(self: *const Array, writer: std.io.AnyWriter) std.io.AnyWriter.Error!void {
         try writer.writeByte('[');
         for (self.values, 0..) |value, i| {
             if (i > 0) {
                 try writer.writeAll(", ");
             }
-            try value.inspect(buffer);
+            try value.inspect(writer);
         }
         try writer.writeByte(']');
     }

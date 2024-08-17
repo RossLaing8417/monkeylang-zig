@@ -47,12 +47,13 @@ pub fn loop(self: *Repl) !void {
     var in_buffer = std.ArrayList(u8).init(self.allocator);
     defer in_buffer.deinit();
 
-    const writer = in_buffer.writer();
+    const out_writer = out_buffer.writer().any();
+    const in_writer = in_buffer.writer();
 
     while (true) {
         _ = try out_stream.write(PROMPT);
 
-        in_stream.streamUntilDelimiter(writer, '\n', null) catch |err| switch (err) {
+        in_stream.streamUntilDelimiter(in_writer, '\n', null) catch |err| switch (err) {
             error.EndOfStream => break,
             else => |e| return e,
         };
@@ -84,7 +85,7 @@ pub fn loop(self: *Repl) !void {
 
         if (result != .Value or result == .Value and result.Value != .Function) {
             out_buffer.shrinkRetainingCapacity(0);
-            try result.inspect(&out_buffer);
+            try result.inspect(out_writer);
             try out_stream.writeAll(out_buffer.items);
             try out_stream.writeByte('\n');
         }

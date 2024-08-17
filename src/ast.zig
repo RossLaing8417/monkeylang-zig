@@ -59,9 +59,9 @@ pub fn deinit(self: *Ast, allocator: std.mem.Allocator) void {
 pub fn write(self: *Ast, allocator: std.mem.Allocator) ![]const u8 {
     var buffer = try std.ArrayList(u8).initCapacity(allocator, self.source.len);
     defer buffer.deinit();
-    var writer = buffer.writer();
+    var writer = buffer.writer().any();
     for (self.nodes) |node| {
-        try node.write(&buffer, .none);
+        try node.write(writer, .none);
         try writer.writeByte('\n');
     }
     return try buffer.toOwnedSlice();
@@ -114,9 +114,9 @@ pub const Node = union(enum) {
         }
     }
 
-    pub fn write(self: *const Node, buffer: *std.ArrayList(u8), option: Node.WriteOption) error{OutOfMemory}!void {
+    pub fn write(self: *const Node, writer: std.io.AnyWriter, option: Node.WriteOption) std.io.AnyWriter.Error!void {
         switch (self.*) {
-            inline else => |node| try node.write(buffer, option),
+            inline else => |node| try node.write(writer, option),
         }
     }
 };
@@ -136,13 +136,12 @@ pub const LetStatement = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const LetStatement, buffer: *std.ArrayList(u8), option: Node.WriteOption) !void {
-        var writer = buffer.writer();
+    pub fn write(self: *const LetStatement, writer: std.io.AnyWriter, option: Node.WriteOption) !void {
         try writer.writeAll(self.tokenLiteral());
         try writer.writeAll(" ");
-        try self.name.write(buffer, option);
+        try self.name.write(writer, option);
         try writer.writeAll(" = ");
-        try self.value.write(buffer, option);
+        try self.value.write(writer, option);
         try writer.writeAll(";");
     }
 };
@@ -160,12 +159,11 @@ pub const ReturnStatement = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const ReturnStatement, buffer: *std.ArrayList(u8), option: Node.WriteOption) !void {
-        var writer = buffer.writer();
+    pub fn write(self: *const ReturnStatement, writer: std.io.AnyWriter, option: Node.WriteOption) !void {
         try writer.writeAll(self.tokenLiteral());
         try writer.writeAll(" ");
         try writer.writeAll("<...>");
-        try self.return_value.write(buffer, option);
+        try self.return_value.write(writer, option);
         try writer.writeAll(";");
     }
 };
@@ -183,9 +181,8 @@ pub const ExpressionStatement = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const ExpressionStatement, buffer: *std.ArrayList(u8), option: Node.WriteOption) !void {
-        var writer = buffer.writer();
-        try self.expression.write(buffer, option);
+    pub fn write(self: *const ExpressionStatement, writer: std.io.AnyWriter, option: Node.WriteOption) !void {
+        try self.expression.write(writer, option);
         try writer.writeAll(";");
     }
 };
@@ -206,11 +203,10 @@ pub const BlockStatement = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const BlockStatement, buffer: *std.ArrayList(u8), option: Node.WriteOption) !void {
-        var writer = buffer.writer();
+    pub fn write(self: *const BlockStatement, writer: std.io.AnyWriter, option: Node.WriteOption) !void {
         try writer.writeAll("{\n");
         for (self.statements) |statement| {
-            try statement.write(buffer, option);
+            try statement.write(writer, option);
             try writer.writeByte('\n');
         }
         try writer.writeAll("}\n");
@@ -229,8 +225,7 @@ pub const Identifier = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const Identifier, buffer: *std.ArrayList(u8), _: Node.WriteOption) !void {
-        var writer = buffer.writer();
+    pub fn write(self: *const Identifier, writer: std.io.AnyWriter, _: Node.WriteOption) !void {
         try writer.writeAll(self.value);
     }
 };
@@ -247,8 +242,7 @@ pub const Integer = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const Integer, buffer: *std.ArrayList(u8), _: Node.WriteOption) !void {
-        var writer = buffer.writer();
+    pub fn write(self: *const Integer, writer: std.io.AnyWriter, _: Node.WriteOption) !void {
         try writer.print("{d}", .{self.value});
     }
 };
@@ -265,8 +259,7 @@ pub const Boolean = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const Boolean, buffer: *std.ArrayList(u8), _: Node.WriteOption) !void {
-        var writer = buffer.writer();
+    pub fn write(self: *const Boolean, writer: std.io.AnyWriter, _: Node.WriteOption) !void {
         try writer.print("{}", .{self.value});
     }
 };
@@ -283,8 +276,7 @@ pub const String = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const String, buffer: *std.ArrayList(u8), _: Node.WriteOption) !void {
-        var writer = buffer.writer();
+    pub fn write(self: *const String, writer: std.io.AnyWriter, _: Node.WriteOption) !void {
         try writer.print("\"{s}\"", .{self.value});
     }
 };
@@ -307,16 +299,15 @@ pub const FunctionLiteral = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const FunctionLiteral, buffer: *std.ArrayList(u8), option: Node.WriteOption) !void {
-        var writer = buffer.writer();
+    pub fn write(self: *const FunctionLiteral, writer: std.io.AnyWriter, option: Node.WriteOption) !void {
         try writer.print("{s} ", .{self.tokenLiteral()});
         try writer.writeAll("(");
         for (self.parameters, 0..) |parameter, i| {
             if (i > 0) try writer.writeAll(", ");
-            try parameter.write(buffer, option);
+            try parameter.write(writer, option);
         }
         try writer.writeAll(") ");
-        try self.body.write(buffer, option);
+        try self.body.write(writer, option);
     }
 };
 
@@ -336,12 +327,11 @@ pub const ArrayLiteral = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const ArrayLiteral, buffer: *std.ArrayList(u8), option: Node.WriteOption) !void {
-        var writer = buffer.writer();
+    pub fn write(self: *const ArrayLiteral, writer: std.io.AnyWriter, option: Node.WriteOption) !void {
         try writer.writeAll("[");
         for (self.elements, 0..) |element, i| {
             if (i > 0) try writer.writeAll(", ");
-            try element.write(buffer, option);
+            try element.write(writer, option);
         }
         try writer.writeAll("]");
     }
@@ -361,13 +351,12 @@ pub const PrefixExpression = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const PrefixExpression, buffer: *std.ArrayList(u8), option: Node.WriteOption) !void {
-        var writer = buffer.writer();
+    pub fn write(self: *const PrefixExpression, writer: std.io.AnyWriter, option: Node.WriteOption) !void {
         if (option == .debug_precedence) {
             try writer.writeAll("(");
         }
         try writer.writeAll(self.operator);
-        try self.operand.write(buffer, option);
+        try self.operand.write(writer, option);
         if (option == .debug_precedence) {
             try writer.writeAll(")");
         }
@@ -390,16 +379,15 @@ pub const InfixExpression = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const InfixExpression, buffer: *std.ArrayList(u8), option: Node.WriteOption) !void {
-        var writer = buffer.writer();
+    pub fn write(self: *const InfixExpression, writer: std.io.AnyWriter, option: Node.WriteOption) !void {
         if (option == .debug_precedence) {
             try writer.writeAll("(");
         }
-        try self.left_operand.write(buffer, option);
+        try self.left_operand.write(writer, option);
         try writer.writeAll(" ");
         try writer.writeAll(self.operator);
         try writer.writeAll(" ");
-        try self.right_operand.write(buffer, option);
+        try self.right_operand.write(writer, option);
         if (option == .debug_precedence) {
             try writer.writeAll(")");
         }
@@ -419,12 +407,11 @@ pub const GroupedExpression = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const GroupedExpression, buffer: *std.ArrayList(u8), option: Node.WriteOption) !void {
-        var writer = buffer.writer();
+    pub fn write(self: *const GroupedExpression, writer: std.io.AnyWriter, option: Node.WriteOption) !void {
         if (option != .debug_precedence) {
             try writer.writeAll("(");
         }
-        try self.expression.write(buffer, option);
+        try self.expression.write(writer, option);
         if (option != .debug_precedence) {
             try writer.writeAll(")");
         }
@@ -450,15 +437,14 @@ pub const IfExpression = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const IfExpression, buffer: *std.ArrayList(u8), option: Node.WriteOption) !void {
-        var writer = buffer.writer();
+    pub fn write(self: *const IfExpression, writer: std.io.AnyWriter, option: Node.WriteOption) !void {
         try writer.writeAll("if ");
-        try self.condition.write(buffer, option);
+        try self.condition.write(writer, option);
         try writer.writeAll(" ");
-        try self.consequence.write(buffer, option);
+        try self.consequence.write(writer, option);
         if (self.alternative) |alternative| {
             try writer.writeAll("else ");
-            try alternative.write(buffer, option);
+            try alternative.write(writer, option);
         }
     }
 };
@@ -481,13 +467,12 @@ pub const CallExpression = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const CallExpression, buffer: *std.ArrayList(u8), option: Node.WriteOption) !void {
-        var writer = buffer.writer();
-        try self.function.write(buffer, option);
+    pub fn write(self: *const CallExpression, writer: std.io.AnyWriter, option: Node.WriteOption) !void {
+        try self.function.write(writer, option);
         try writer.writeAll("(");
         for (self.arguments, 0..) |argument, i| {
             if (i > 0) try writer.writeAll(", ");
-            try argument.write(buffer, option);
+            try argument.write(writer, option);
         }
         try writer.writeAll(")");
     }
@@ -508,14 +493,13 @@ pub const IndexExpression = struct {
         return self.token.literal;
     }
 
-    pub fn write(self: *const IndexExpression, buffer: *std.ArrayList(u8), option: Node.WriteOption) !void {
-        var writer = buffer.writer();
+    pub fn write(self: *const IndexExpression, writer: std.io.AnyWriter, option: Node.WriteOption) !void {
         if (option == .debug_precedence) {
             try writer.writeAll("(");
         }
-        try self.expression.write(buffer, option);
+        try self.expression.write(writer, option);
         try writer.writeAll("[");
-        try self.index.write(buffer, option);
+        try self.index.write(writer, option);
         try writer.writeAll("]");
         if (option == .debug_precedence) {
             try writer.writeAll(")");

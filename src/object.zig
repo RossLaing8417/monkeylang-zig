@@ -90,15 +90,29 @@ pub const Value = union(enum) {
             inline else => |literal| try literal.inspect(writer),
         }
     }
+
+    pub fn getNode(self: *const Value) ?Ast.Node {
+        return switch (self.*) {
+            inline else => |value| value.node,
+        };
+    }
+
+    pub fn setNode(self: *Value, node: ?Ast.Node) void {
+        switch (self.*) {
+            inline else => |*value| value.node = node,
+        }
+    }
 };
 
 pub const Null = struct {
+    node: ?Ast.Node = null,
     pub fn inspect(_: *const Null, writer: std.io.AnyWriter) !void {
         try writer.writeAll("null");
     }
 };
 
 pub const Integer = struct {
+    node: ?Ast.Node = null,
     value: i64,
 
     pub fn inspect(self: *const Integer, writer: std.io.AnyWriter) !void {
@@ -107,6 +121,7 @@ pub const Integer = struct {
 };
 
 pub const Boolean = struct {
+    node: ?Ast.Node = null,
     value: bool,
 
     pub fn inspect(self: *const Boolean, writer: std.io.AnyWriter) !void {
@@ -115,6 +130,7 @@ pub const Boolean = struct {
 };
 
 pub const String = struct {
+    node: ?Ast.Node = null,
     value: []const u8,
     owned: bool,
 
@@ -127,12 +143,21 @@ pub const String = struct {
 
     pub fn deinit(self: *String, allocator: std.mem.Allocator) void {
         if (self.owned) {
+            // for (0..Evaluator.indent) |_| {
+            //     std.debug.print("  ", .{});
+            // }
+            // std.debug.print("> String freed {*}\n", .{self.value});
             allocator.free(self.value);
         }
     }
 
     pub fn copy(self: *const String, allocator: std.mem.Allocator) !String {
-        return .{ .value = try allocator.dupe(u8, self.value), .owned = true };
+        const value = try allocator.dupe(u8, self.value);
+        // for (0..Evaluator.indent) |_| {
+        //     std.debug.print("  ", .{});
+        // }
+        // std.debug.print("> String copied {*} --> {*}\n", .{ self.value, value });
+        return .{ .value = value, .owned = true };
     }
 
     pub fn inspect(self: *const String, writer: std.io.AnyWriter) !void {
@@ -147,6 +172,7 @@ pub const String = struct {
 };
 
 pub const Function = struct {
+    node: ?Ast.Node = null,
     parameters: []const *Ast.Identifier,
     body: *Ast.BlockStatement,
     environment: *Environment,
@@ -178,6 +204,7 @@ pub const Function = struct {
 };
 
 pub const Array = struct {
+    node: ?Ast.Node = null,
     values: []Value,
 
     pub fn initAppend(allocator: std.mem.Allocator, from: []const Value, value: Value) !Array {
@@ -206,11 +233,19 @@ pub const Array = struct {
                 else => {},
             }
         }
+        // for (0..Evaluator.indent) |_| {
+        //     std.debug.print("  ", .{});
+        // }
+        // std.debug.print("> Array freed {*}\n", .{self.values});
         allocator.free(self.values);
     }
 
     pub fn copy(self: *const Array, allocator: std.mem.Allocator) std.mem.Allocator.Error!Array {
         const values = try allocator.alloc(Value, self.values.len);
+        // for (0..Evaluator.indent) |_| {
+        //     std.debug.print("  ", .{});
+        // }
+        // std.debug.print("> Array copied {*} --> {*}\n", .{ self.values, values });
         for (values, self.values) |*to, from| {
             to.* = try from.copy(allocator);
         }

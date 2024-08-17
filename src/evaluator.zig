@@ -10,11 +10,35 @@ const Environment = @import("environment.zig");
 const Builtin = @import("builtin.zig");
 
 const Container = Object.Container;
-const Error = std.mem.Allocator.Error;
+const Error = std.mem.Allocator.Error || std.io.AnyWriter.Error;
 
 const NULL = Container{ .Value = .{ .Null = .{} } };
 
 allocator: std.mem.Allocator,
+
+pub var indent: usize = 0;
+
+fn debugEval(node: Ast.Node) !void {
+    var buffer = try std.BoundedArray(u8, 4096).init(0);
+    const writer = buffer.writer();
+    try writer.writeByteNTimes(' ', indent * 2);
+    try writer.print("EVAL {s}: ", .{@tagName(node)});
+    try node.write(writer.any(), .none);
+    std.mem.replaceScalar(u8, buffer.slice(), '\n', ' ');
+    try writer.writeByte('\n');
+    std.debug.print("{s}", .{buffer.slice()});
+}
+
+fn debugResult(result: Container, messsage: []const u8) !void {
+    var buffer = try std.BoundedArray(u8, 4096).init(0);
+    const writer = buffer.writer();
+    try writer.writeByteNTimes(' ', indent * 2);
+    try writer.print("- {s} result: ", .{messsage});
+    try result.inspect(writer.any());
+    std.mem.replaceScalar(u8, buffer.slice(), '\n', ' ');
+    try writer.writeByte('\n');
+    std.debug.print("{s}", .{buffer.slice()});
+}
 
 pub fn init(allocator: std.mem.Allocator) !*Evaluator {
     const evaluator = try allocator.create(Evaluator);
@@ -45,126 +69,137 @@ pub fn evalNodes(self: *Evaluator, nodes: []const Ast.Node, environment: *Enviro
 }
 
 pub fn eval(self: *Evaluator, node: Ast.Node, environment: *Environment) Error!Container {
-    switch (node) {
+    // try debugEval(node);
+    // indent += 1;
+    // defer indent -= 1;
+    var result: Container = switch (node) {
         // Statements
 
-        .LetStatement => |let_statement| {
-            return try self.evalLetStatement(let_statement, environment);
-        },
-        .ReturnStatement => |return_statement| {
-            return try self.evalReturnStatement(return_statement, environment);
-        },
-        .ExpressionStatement => |expr_statement| {
-            return try self.eval(expr_statement.expression, environment);
-        },
+        .LetStatement => |let_statement| try self.evalLetStatement(let_statement, environment),
+        .ReturnStatement => |return_statement| try self.evalReturnStatement(return_statement, environment),
+        .ExpressionStatement => |expr_statement| try self.eval(expr_statement.expression, environment),
 
-        .BlockStatement => |block_statement| {
-            return try self.evalNodes(block_statement.statements, environment);
+        .BlockStatement => |block_statement| blk: {
+            var result = try self.evalNodes(block_statement.statements, environment);
+            switch (result) {
+                .Value,
+                .ReturnValue,
+                => |value| if (value.getNode()) |blk_node| {
+                    switch (blk_node) {
+                        .Identifier => break :blk try result.copy(self.allocator),
+                        else => {},
+                    }
+                },
+                else => {},
+            }
+            break :blk result;
         },
 
         // Expressions
 
-        .Identifier => |identifier| {
-            return try self.evalIdentifier(identifier, environment);
-        },
-        .Integer => |integer| {
-            return .{ .Value = .{ .Integer = .{ .value = integer.value } } };
-        },
-        .Boolean => |boolean| {
-            return .{ .Value = .{ .Boolean = .{ .value = boolean.value } } };
-        },
-        .String => |string| {
-            return .{ .Value = .{ .String = .{ .value = string.value, .owned = false } } };
-        },
+        .Identifier => |identifier| try self.evalIdentifier(identifier, environment),
+        .Integer => |integer| .{ .Value = .{ .Integer = .{ .value = integer.value } } },
+        .Boolean => |boolean| .{ .Value = .{ .Boolean = .{ .value = boolean.value } } },
+        .String => |string| .{ .Value = .{ .String = .{ .value = string.value, .owned = false } } },
 
-        .FunctionLiteral => |function_literal| {
+        .FunctionLiteral => |function_literal| blk: {
             environment.incRef();
-            return .{ .Value = .{ .Function = .{
+            break :blk .{ .Value = .{ .Function = .{
                 .parameters = function_literal.parameters,
                 .body = function_literal.body,
                 .environment = environment,
             } } };
         },
-        .ArrayLiteral => |array_literal| {
-            return try self.evalArrayLiteral(array_literal.elements, environment);
-        },
+        .ArrayLiteral => |array_literal| try self.evalArrayLiteral(array_literal.elements, environment),
 
-        .PrefixExpression => |prefix_expr| {
-            return try self.evalPrefixExpression(
-                prefix_expr.token,
-                try self.eval(prefix_expr.operand, environment),
-            );
-        },
-        .InfixExpression => |infix_expr| {
+        .PrefixExpression => |prefix_expr| try self.evalPrefixExpression(
+            prefix_expr.token,
+            try self.eval(prefix_expr.operand, environment),
+        ),
+        .InfixExpression => |infix_expr| blk: {
             var left_operand = try self.eval(infix_expr.left_operand, environment);
             var right_operand = try self.eval(infix_expr.right_operand, environment);
             defer {
                 if (infix_expr.left_operand != .Identifier) left_operand.deinit(self.allocator);
                 if (infix_expr.right_operand != .Identifier) right_operand.deinit(self.allocator);
             }
-            return try self.evalInfixExpression(
+            break :blk try self.evalInfixExpression(
                 infix_expr.token,
                 left_operand,
                 right_operand,
             );
         },
-        .GroupedExpression => |grouped_expr| {
-            return try self.eval(grouped_expr.expression, environment);
+        .GroupedExpression => |grouped_expr| try self.eval(grouped_expr.expression, environment),
+        .IfExpression => |if_expr| try self.evalIfExpression(if_expr, environment),
+        .CallExpression => |call_expr| try self.evalCallExpression(call_expr, environment),
+        .IndexExpression => |index_expr| try self.evalIndexExpression(index_expr, environment),
+    };
+    switch (node) {
+        .Identifier => {
+            switch (result) {
+                .Value,
+                .ReturnValue,
+                => |*value| value.setNode(node),
+                else => {},
+            }
         },
-        .IfExpression => |if_expr| {
-            return try self.evalIfExpression(if_expr, environment);
-        },
-        .CallExpression => |call_expr| {
-            return try self.evalCallExpression(call_expr, environment);
-        },
-        .IndexExpression => |index_expr| {
-            return try self.evalIndexExpression(index_expr, environment);
-        },
+        else => {},
     }
-
-    return NULL;
+    return result;
 }
 
 fn evalLetStatement(self: *Evaluator, let_statement: *const Ast.LetStatement, environment: *Environment) !Container {
-    var result = try self.eval(let_statement.value, environment);
-    if (result == .Error) {
-        return result;
-    }
-    std.debug.assert(result == .Value);
-    var value = switch (let_statement.value) {
-        .Integer,
-        .Boolean,
-        .String,
-        .FunctionLiteral,
-        => result,
-        else => blk: {
-            defer result.deinit(self.allocator);
-            break :blk try result.copy(self.allocator);
-        },
+    const result: Container = blk: {
+        var result = try self.eval(let_statement.value, environment);
+        if (result == .Error) {
+            break :blk result;
+        }
+        std.debug.assert(result == .Value);
+        var value = switch (let_statement.value) {
+            .Integer,
+            .Boolean,
+            .String,
+            .FunctionLiteral,
+            => result,
+            else => val_blk: {
+                defer result.deinit(self.allocator);
+                break :val_blk try result.copy(self.allocator);
+            },
+        };
+        try environment.set(let_statement.name.value, value.Value);
+        break :blk try value.copy(self.allocator);
     };
-    try environment.set(let_statement.name.value, value.Value);
-    return value.copy(self.allocator);
+    // try debugResult(result, "LetStatement");
+    return result;
 }
 
 fn evalReturnStatement(self: *Evaluator, return_statement: *const Ast.ReturnStatement, environment: *Environment) !Container {
-    const result = try self.eval(return_statement.return_value, environment);
-    switch (result) {
-        .Value => |literal| return .{ .ReturnValue = literal },
-        .Error => return result,
-        else => unreachable,
-    }
+    const result: Container = blk: {
+        const result = try self.eval(return_statement.return_value, environment);
+        switch (result) {
+            .Value => |literal| break :blk .{ .ReturnValue = literal },
+            .Error => break :blk result,
+            else => unreachable,
+        }
+    };
+    // try debugResult(result, "ReturnStatement");
+    return result;
 }
 
 fn evalIdentifier(self: *Evaluator, identifier: *const Ast.Identifier, environment: *Environment) !Container {
-    if (environment.get(identifier.value)) |object| {
-        return .{ .Value = object.* };
-    }
+    const result: Container = blk: {
+        if (environment.get(identifier.value)) |object| {
+            break :blk .{ .Value = object.* };
+        }
 
-    if (Builtin.FunctionMap.get(identifier.value)) |builtin| {
-        return .{ .BuiltinFunction = builtin };
-    }
+        if (Builtin.FunctionMap.get(identifier.value)) |builtin| {
+            break :blk .{ .BuiltinFunction = builtin };
+        }
 
-    return try self.evalError("Unknown identifier: '{s}'", .{identifier.value});
+        break :blk try self.evalError("Unknown identifier: '{s}'", .{identifier.value});
+    };
+    // try debugResult(result, "Identifier");
+    return result;
 }
 
 fn evalArrayLiteral(self: *Evaluator, elements: []const Ast.Node, environment: *Environment) !Container {
@@ -185,279 +220,304 @@ fn evalArrayLiteral(self: *Evaluator, elements: []const Ast.Node, environment: *
         try results.append(result.Value);
     }
 
-    return .{ .Value = .{ .Array = .{ .values = try results.toOwnedSlice() } } };
+    const result: Container = .{ .Value = .{ .Array = .{ .values = try results.toOwnedSlice() } } };
+    // try debugResult(result, "ArrayLiteral");
+    return result;
 }
 
 fn evalPrefixExpression(self: *Evaluator, operator: Lexer.Token, operand: Container) !Container {
-    switch (operator.type) {
-        .Bang => return self.evalBangOperator(operand),
-        .Minus => return self.evalNegativeOperator(operand),
-        else => return try self.evalError("Invalid prefix operator: {s}", .{@tagName(operator.type)}),
-    }
+    const result = switch (operator.type) {
+        .Bang => try self.evalBangOperator(operand),
+        .Minus => try self.evalNegativeOperator(operand),
+        else => try self.evalError("Invalid prefix operator: {s}", .{@tagName(operator.type)}),
+    };
+    // try debugResult(result, "PrefixExpression");
+    return result;
 }
 
 fn evalBangOperator(self: *Evaluator, operand: Container) !Container {
-    switch (operand) {
+    const result: Container = switch (operand) {
         .Value => |literal| switch (literal) {
-            .Integer => |integer| return .{ .Value = .{ .Boolean = .{ .value = integer.value == 0 } } },
-            .Boolean => |boolean| return .{ .Value = .{ .Boolean = .{ .value = !boolean.value } } },
-            .Null => return NULL,
-            else => return try self.evalError("Invalid literal '{s}' for operand", .{@tagName(literal)}),
+            .Integer => |integer| .{ .Value = .{ .Boolean = .{ .value = integer.value == 0 } } },
+            .Boolean => |boolean| .{ .Value = .{ .Boolean = .{ .value = !boolean.value } } },
+            .Null => NULL,
+            else => try self.evalError("Invalid literal '{s}' for operand", .{@tagName(literal)}),
         },
-        .Error => return operand,
-        else => return try self.evalError("Invalid type. Expected 'Value' but found '{s}'", .{@tagName(operand)}),
-    }
+        .Error => operand,
+        else => try self.evalError("Invalid type. Expected 'Value' but found '{s}'", .{@tagName(operand)}),
+    };
+    return result;
 }
 
 fn evalNegativeOperator(self: *Evaluator, operand: Container) !Container {
-    switch (operand) {
+    const result: Container = switch (operand) {
         .Value => |literal| switch (literal) {
-            .Integer => |integer| return .{ .Value = .{ .Integer = .{ .value = -integer.value } } },
-            .Null => return NULL,
-            else => return try self.evalError("Operand type mismatch. Invalid operation: -'{s}'", .{@tagName(literal)}),
+            .Integer => |integer| .{ .Value = .{ .Integer = .{ .value = -integer.value } } },
+            .Null => NULL,
+            else => try self.evalError("Operand type mismatch. Invalid operation: -'{s}'", .{@tagName(literal)}),
         },
-        .Error => return operand,
-        else => return try self.evalError("Invalid type. Expected 'Value' but found '{s}'", .{@tagName(operand)}),
-    }
+        .Error => operand,
+        else => try self.evalError("Invalid type. Expected 'Value' but found '{s}'", .{@tagName(operand)}),
+    };
+    return result;
 }
 
 fn evalInfixExpression(self: *Evaluator, operator: Lexer.Token, left_operand: Container, right_operand: Container) !Container {
-    switch (left_operand) {
+    const result: Container = switch (left_operand) {
         .Value => |left_literal| switch (right_operand) {
             .Value => |right_literal| switch (left_literal) {
-                .Integer => |left_integer| {
-                    switch (right_literal) {
-                        .Integer => |right_integer| return self.evalIntegerInfixExpression(
-                            operator,
-                            left_integer.value,
-                            right_integer.value,
-                        ),
-                        .Null => return NULL,
-                        else => return try self.evalError(
-                            "Right operand type mismatch. Invalid operation: 'Integer' {s} '{s}'",
-                            .{ operator.literal, @tagName(right_literal) },
-                        ),
-                    }
+                .Integer => |left_integer| switch (right_literal) {
+                    .Integer => |right_integer| try self.evalIntegerInfixExpression(
+                        operator,
+                        left_integer.value,
+                        right_integer.value,
+                    ),
+                    .Null => NULL,
+                    else => try self.evalError(
+                        "Right operand type mismatch. Invalid operation: 'Integer' {s} '{s}'",
+                        .{ operator.literal, @tagName(right_literal) },
+                    ),
                 },
-                .Boolean => |left_boolean| {
-                    switch (right_literal) {
-                        .Boolean => |right_boolean| return self.evalBooleanInfixExpression(
-                            operator,
-                            left_boolean.value,
-                            right_boolean.value,
-                        ),
-                        .Null => return NULL,
-                        else => return try self.evalError(
-                            "Right operand type mismatch. Invalid operation: 'Boolean' {s} '{s}'",
-                            .{ operator.literal, @tagName(right_literal) },
-                        ),
-                    }
+                .Boolean => |left_boolean| switch (right_literal) {
+                    .Boolean => |right_boolean| try self.evalBooleanInfixExpression(
+                        operator,
+                        left_boolean.value,
+                        right_boolean.value,
+                    ),
+                    .Null => return NULL,
+                    else => return try self.evalError(
+                        "Right operand type mismatch. Invalid operation: 'Boolean' {s} '{s}'",
+                        .{ operator.literal, @tagName(right_literal) },
+                    ),
                 },
-                .String => |left_string| {
-                    switch (right_literal) {
-                        .String => |right_string| return self.evalStringInfixExpression(
-                            operator,
-                            left_string.value,
-                            right_string.value,
-                        ),
-                        else => return try self.evalError(
-                            "Right operand type mismatch. Invalid operation: 'String' {s} '{s}'",
-                            .{ operator.literal, @tagName(right_literal) },
-                        ),
-                    }
+                .String => |left_string| switch (right_literal) {
+                    .String => |right_string| try self.evalStringInfixExpression(
+                        operator,
+                        left_string.value,
+                        right_string.value,
+                    ),
+                    else => try self.evalError(
+                        "Right operand type mismatch. Invalid operation: 'String' {s} '{s}'",
+                        .{ operator.literal, @tagName(right_literal) },
+                    ),
                 },
-                .Null => return NULL,
-                else => return try self.evalError(
+                .Null => NULL,
+                else => try self.evalError(
                     "Invalid literal '{s}' for left operand",
                     .{@tagName(left_literal)},
                 ),
             },
-            .Error => return right_operand,
-            else => return try self.evalError(
+            .Error => right_operand,
+            else => try self.evalError(
                 "Right operand type mismatch. Expected 'Value' but found '{s}'",
                 .{@tagName(right_operand)},
             ),
         },
-        .Error => return left_operand,
-        else => return try self.evalError(
+        .Error => left_operand,
+        else => try self.evalError(
             "Right operand type mismatch. Expected 'Value' but found '{s}'",
             .{@tagName(left_operand)},
         ),
-    }
+    };
+    // try debugResult(result, "InfixExpression");
+    return result;
 }
 
 fn evalIntegerInfixExpression(self: *Evaluator, operator: Lexer.Token, left_operand: i64, right_operand: i64) !Container {
-    switch (operator.type) {
-        .Plus => return .{ .Value = .{ .Integer = .{ .value = left_operand + right_operand } } },
-        .Minus => return .{ .Value = .{ .Integer = .{ .value = left_operand - right_operand } } },
-        .Asterisk => return .{ .Value = .{ .Integer = .{ .value = left_operand * right_operand } } },
-        .Slash => return .{ .Value = .{ .Integer = .{ .value = @divExact(left_operand, right_operand) } } },
-        .Equal => return .{ .Value = .{ .Boolean = .{ .value = left_operand == right_operand } } },
-        .NotEqual => return .{ .Value = .{ .Boolean = .{ .value = left_operand != right_operand } } },
-        .LessThan => return .{ .Value = .{ .Boolean = .{ .value = left_operand < right_operand } } },
-        .GreaterThan => return .{ .Value = .{ .Boolean = .{ .value = left_operand > right_operand } } },
-        else => return try self.evalError("Invalid operation: 'Integer' {s} 'Integer'", .{operator.literal}),
-    }
+    const result: Container = switch (operator.type) {
+        .Plus => .{ .Value = .{ .Integer = .{ .value = left_operand + right_operand } } },
+        .Minus => .{ .Value = .{ .Integer = .{ .value = left_operand - right_operand } } },
+        .Asterisk => .{ .Value = .{ .Integer = .{ .value = left_operand * right_operand } } },
+        .Slash => .{ .Value = .{ .Integer = .{ .value = @divExact(left_operand, right_operand) } } },
+        .Equal => .{ .Value = .{ .Boolean = .{ .value = left_operand == right_operand } } },
+        .NotEqual => .{ .Value = .{ .Boolean = .{ .value = left_operand != right_operand } } },
+        .LessThan => .{ .Value = .{ .Boolean = .{ .value = left_operand < right_operand } } },
+        .GreaterThan => .{ .Value = .{ .Boolean = .{ .value = left_operand > right_operand } } },
+        else => try self.evalError("Invalid operation: 'Integer' {s} 'Integer'", .{operator.literal}),
+    };
+    return result;
 }
 
 fn evalBooleanInfixExpression(self: *Evaluator, operator: Lexer.Token, left_operand: bool, right_operand: bool) !Container {
-    switch (operator.type) {
-        .Equal => return .{ .Value = .{ .Boolean = .{ .value = left_operand == right_operand } } },
-        .NotEqual => return .{ .Value = .{ .Boolean = .{ .value = left_operand != right_operand } } },
-        else => return try self.evalError("Invalid operation: 'Boolean' {s} 'Boolean'", .{operator.literal}),
-    }
+    const result: Container = switch (operator.type) {
+        .Equal => .{ .Value = .{ .Boolean = .{ .value = left_operand == right_operand } } },
+        .NotEqual => .{ .Value = .{ .Boolean = .{ .value = left_operand != right_operand } } },
+        else => try self.evalError("Invalid operation: 'Boolean' {s} 'Boolean'", .{operator.literal}),
+    };
+    return result;
 }
 
 fn evalStringInfixExpression(self: *Evaluator, operator: Lexer.Token, left_operand: []const u8, right_operand: []const u8) !Container {
-    switch (operator.type) {
-        .Plus => return .{ .Value = .{ .String = try Object.String.initMerge(self.allocator, left_operand, right_operand) } },
-        .Equal => return .{ .Value = .{ .Boolean = .{ .value = std.mem.eql(u8, left_operand, right_operand) } } },
-        .NotEqual => return .{ .Value = .{ .Boolean = .{ .value = !std.mem.eql(u8, left_operand, right_operand) } } },
-        else => return try self.evalError("Invalid operation: 'String' {s} 'String'", .{operator.literal}),
-    }
+    const result: Container = switch (operator.type) {
+        .Plus => .{ .Value = .{ .String = try Object.String.initMerge(self.allocator, left_operand, right_operand) } },
+        .Equal => .{ .Value = .{ .Boolean = .{ .value = std.mem.eql(u8, left_operand, right_operand) } } },
+        .NotEqual => .{ .Value = .{ .Boolean = .{ .value = !std.mem.eql(u8, left_operand, right_operand) } } },
+        else => try self.evalError("Invalid operation: 'String' {s} 'String'", .{operator.literal}),
+    };
+    return result;
 }
 
 fn evalIfExpression(self: *Evaluator, if_expr: *const Ast.IfExpression, environment: *Environment) !Container {
-    const condition = try self.eval(if_expr.condition, environment);
-    if (condition == .Error) {
-        return condition;
-    }
+    const result: Container = blk: {
+        const condition = try self.eval(if_expr.condition, environment);
+        if (condition == .Error) {
+            break :blk condition;
+        }
 
-    if (isTruthy(condition)) {
-        return try self.eval(if_expr.consequence, environment);
-    } else if (if_expr.alternative) |alternative| {
-        return try self.eval(alternative, environment);
-    }
+        if (isTruthy(condition)) {
+            break :blk try self.eval(if_expr.consequence, environment);
+        } else if (if_expr.alternative) |alternative| {
+            break :blk try self.eval(alternative, environment);
+        }
 
-    return NULL;
+        break :blk NULL;
+    };
+    // try debugResult(result, "IfExpression");
+    return result;
 }
 
 fn evalCallExpression(self: *Evaluator, call_expr: *const Ast.CallExpression, environment: *Environment) !Container {
-    var function = blk: {
-        var result = try self.eval(call_expr.function, environment);
-        if (result == .Error) {
-            return result;
-        }
+    var result: Container = blk: {
+        var function = fn_blk: {
+            var result = try self.eval(call_expr.function, environment);
+            if (result == .Error) {
+                break :blk result;
+            }
 
-        if (result == .BuiltinFunction) {
-            return self.evalBuiltinFunction(result.BuiltinFunction, call_expr.arguments, environment);
-        }
+            if (result == .BuiltinFunction) {
+                break :blk try self.evalBuiltinFunction(result.BuiltinFunction, call_expr.arguments, environment);
+            }
 
-        std.debug.assert(result != .ReturnValue);
+            std.debug.assert(result != .ReturnValue);
 
-        if (result.Value != .Function) {
-            defer result.deinit(self.allocator);
-            return self.evalError(
-                "Call expression type mismatch. Expected 'Function' but found '{s}'",
-                .{@tagName(result.Value)},
+            if (result.Value != .Function) {
+                defer result.deinit(self.allocator);
+                break :blk try self.evalError(
+                    "Call expression type mismatch. Expected 'Function' but found '{s}'",
+                    .{@tagName(result.Value)},
+                );
+            }
+
+            break :fn_blk result.Value.Function;
+        };
+
+        defer if (call_expr.function != .Identifier) {
+            function.deinit(self.allocator);
+        };
+
+        if (call_expr.arguments.len != function.parameters.len) {
+            break :blk try self.evalError(
+                "Call expression signature mismatch. Expected {d} arguments but found {d}",
+                .{ function.parameters.len, call_expr.arguments.len },
             );
         }
 
-        break :blk result.Value.Function;
-    };
+        var enclosed_env = try Environment.initEnclosed(self.allocator, function.environment);
+        defer enclosed_env.decRef();
 
-    defer if (call_expr.function != .Identifier) {
-        function.deinit(self.allocator);
-    };
-
-    if (call_expr.arguments.len != function.parameters.len) {
-        return self.evalError(
-            "Call expression signature mismatch. Expected {d} arguments but found {d}",
-            .{ function.parameters.len, call_expr.arguments.len },
-        );
-    }
-
-    var enclosed_env = try Environment.initEnclosed(self.allocator, function.environment);
-    defer enclosed_env.decRef();
-
-    for (function.parameters, call_expr.arguments) |param, arg| {
-        const result = try self.eval(arg, environment);
-        if (result == .Error) {
-            return result;
+        for (function.parameters, call_expr.arguments) |param, arg| {
+            const result = try self.eval(arg, environment);
+            if (result == .Error) {
+                break :blk result;
+            }
+            std.debug.assert(result == .Value);
+            try enclosed_env.set(param.value, switch (result) {
+                .Value => |value| if (value.getNode()) |node| switch (node) {
+                    .Identifier => try result.Value.copy(self.allocator),
+                    else => result.Value,
+                } else result.Value,
+                else => result.Value,
+            });
         }
-        std.debug.assert(result == .Value);
-        try enclosed_env.set(param.value, result.Value);
-    }
 
-    var result = unwrapReturn(try self.eval(.{ .BlockStatement = function.body }, enclosed_env));
+        break :blk unwrapReturn(try self.eval(.{ .BlockStatement = function.body }, enclosed_env));
+    };
     defer result.deinit(self.allocator);
-
+    // try debugResult(result, "CallExpression");
     return result.copy(self.allocator);
 }
 
 fn evalIndexExpression(self: *Evaluator, index_expr: *const Ast.IndexExpression, environment: *Environment) !Container {
-    var array = blk: {
-        var result = try self.eval(index_expr.expression, environment);
-        if (result == .Error) {
-            return result;
-        }
+    const result: Container = blk: {
+        var array = arr_blk: {
+            var result = try self.eval(index_expr.expression, environment);
+            if (result == .Error) {
+                break :blk result;
+            }
 
-        std.debug.assert(result != .ReturnValue);
+            std.debug.assert(result != .ReturnValue);
 
-        if (result.Value != .Array) {
-            defer result.deinit(self.allocator);
-            return self.evalError(
-                "Index expression type mismatch. Expected 'Array' but found '{s}'",
-                .{@tagName(result.Value)},
-            );
-        }
+            if (result.Value != .Array) {
+                defer result.deinit(self.allocator);
+                break :blk try self.evalError(
+                    "Index expression type mismatch. Expected 'Array' but found '{s}'",
+                    .{@tagName(result.Value)},
+                );
+            }
 
-        break :blk result.Value.Array;
+            break :arr_blk result.Value.Array;
+        };
+
+        defer if (index_expr.expression != .Identifier) {
+            array.deinit(self.allocator);
+        };
+
+        const index = idx_blk: {
+            var result = try self.eval(index_expr.index, environment);
+            if (result == .Error) {
+                break :blk result;
+            }
+
+            std.debug.assert(result == .Value);
+
+            if (result.Value != .Integer) {
+                defer result.deinit(self.allocator);
+                break :blk try self.evalError(
+                    "Index expression type mismatch. Expected 'Integer' but found '{s}'",
+                    .{@tagName(result)},
+                );
+            }
+
+            if (result.Value.Integer.value < 0 or result.Value.Integer.value >= array.values.len) {
+                break :blk try self.evalError(
+                    "Index {d} out of bounds for array of length {d}",
+                    .{ result.Value.Integer.value, array.values.len },
+                );
+            }
+
+            break :idx_blk result.Value.Integer;
+        };
+
+        break :blk .{ .Value = try array.values[@intCast(index.value)].copy(self.allocator) };
     };
-
-    defer if (index_expr.expression != .Identifier) {
-        array.deinit(self.allocator);
-    };
-
-    const index = blk: {
-        var result = try self.eval(index_expr.index, environment);
-        if (result == .Error) {
-            return result;
-        }
-
-        std.debug.assert(result == .Value);
-
-        if (result.Value != .Integer) {
-            defer result.deinit(self.allocator);
-            return self.evalError(
-                "Index expression type mismatch. Expected 'Integer' but found '{s}'",
-                .{@tagName(result)},
-            );
-        }
-
-        if (result.Value.Integer.value < 0 or result.Value.Integer.value >= array.values.len) {
-            return self.evalError(
-                "Index {d} out of bounds for array of length {d}",
-                .{ result.Value.Integer.value, array.values.len },
-            );
-        }
-
-        break :blk result.Value.Integer;
-    };
-
-    return .{ .Value = try array.values[@intCast(index.value)].copy(self.allocator) };
+    // try debugResult(result, "IndexExpression");
+    return result;
 }
 
 fn evalBuiltinFunction(self: *Evaluator, builtin: Object.BuiltinFunction, arguments: []const Ast.Node, environment: *Environment) !Container {
-    const args = try self.allocator.alloc(Container, arguments.len);
-    defer {
-        for (args, arguments) |*arg, argument| {
-            if (argument != .Identifier) {
-                arg.deinit(self.allocator);
+    const result: Container = blk: {
+        const args = try self.allocator.alloc(Container, arguments.len);
+        defer {
+            for (args, arguments) |*arg, argument| {
+                if (argument != .Identifier) {
+                    arg.deinit(self.allocator);
+                }
             }
+            self.allocator.free(args);
         }
-        self.allocator.free(args);
-    }
 
-    for (args, arguments) |*arg, argument| {
-        const result = try self.eval(argument, environment);
-        if (result == .Error) {
-            return result;
+        for (args, arguments) |*arg, argument| {
+            const result = try self.eval(argument, environment);
+            if (result == .Error) {
+                break :blk result;
+            }
+            arg.* = result;
         }
-        arg.* = result;
-    }
 
-    return builtin.func(self, args);
+        break :blk try builtin.func(self, args);
+    };
+    // try debugResult(result, "BuiltinFunction");
+    return result;
 }
 
 fn isTruthy(object: Container) bool {
@@ -925,17 +985,46 @@ test "Eval Closure" {
     try expectEqualObjects(expected, result);
 }
 
-test "Eval Array Literal" {
+test "Eval Arrays" {
     const input = [_]TestInput{
-        .{ .input = "[1, 2 * 2, 3 + 3]", .expected = .{
-            .Value = .{
-                .Array = .{ .values = @constCast(&[_]Object.Value{
-                    .{ .Integer = .{ .value = 1 } },
-                    .{ .Integer = .{ .value = 4 } },
-                    .{ .Integer = .{ .value = 6 } },
-                }) },
+        // .{ .input = "[1, 2 * 2, 3 + 3]", .expected = .{
+        //     .Value = .{
+        //         .Array = .{ .values = @constCast(&[_]Object.Value{
+        //             .{ .Integer = .{ .value = 1 } },
+        //             .{ .Integer = .{ .value = 4 } },
+        //             .{ .Integer = .{ .value = 6 } },
+        //         }) },
+        //     },
+        // } },
+        .{
+            .input =
+            \\let map = fn(arr, f) {
+            \\    let itr = fn(arr, accumulated) {
+            \\        if (len(arr) == 0) {
+            \\            accumulated;
+            \\         } else {
+            \\            itr(rest(arr), push(accumulated, f(first(arr))));
+            \\        }
+            \\    };
+            \\    itr(arr, []);
+            \\};
+            \\let a = [1, 2, 3, 4];
+            \\let double = fn(x) { x * 2; };
+            \\map(a, double);
+            ,
+            .expected = .{
+                .Value = .{
+                    .Array = .{
+                        .values = @constCast(&[_]Object.Value{
+                            .{ .Integer = .{ .value = 2 } },
+                            .{ .Integer = .{ .value = 4 } },
+                            .{ .Integer = .{ .value = 6 } },
+                            .{ .Integer = .{ .value = 8 } },
+                        }),
+                    },
+                },
             },
-        } },
+        },
     };
 
     const allocator = std.testing.allocator;
@@ -1001,7 +1090,12 @@ fn testAst(ast: *Ast) !void {
 }
 
 fn expectEqualObjects(expected: Container, actual: Container) TestError!void {
-    try std.testing.expectEqualStrings(@tagName(expected), @tagName(actual));
+    std.testing.expectEqualStrings(@tagName(expected), @tagName(actual)) catch |err| {
+        if (actual == .Error and expected != .Error) {
+            std.debug.print("Error value: {s}\n", .{actual.Error.value});
+        }
+        return err;
+    };
     switch (expected) {
         .Value => |value| try expectEqualValues(value, actual.Value),
         .ReturnValue => |value| try expectEqualValues(value, actual.ReturnValue),

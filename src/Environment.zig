@@ -2,9 +2,9 @@ const std = @import("std");
 
 const Environment = @This();
 
-const Object = @import("object.zig");
+const object = @import("object.zig");
 
-const Value = Object.Value;
+const Value = object.Value;
 const Map = std.StringHashMap(Value);
 
 allocator: std.mem.Allocator,

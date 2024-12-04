@@ -2,8 +2,8 @@ const std = @import("std");
 
 const Ast = @This();
 
-const Parser = @import("parser.zig");
-const Lexer = @import("lexer.zig");
+const Parser = @import("Parser.zig");
+const Lexer = @import("Lexer.zig");
 const Token = Lexer.Token;
 
 source: []const u8,

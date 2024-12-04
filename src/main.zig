@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const Repl = @import("repl.zig");
+const Repl = @import("Repl.zig");
 
 pub fn main() !void {
     const stdin = std.io.getStdIn();

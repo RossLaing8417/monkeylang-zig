@@ -1,9 +1,9 @@
 const std = @import("std");
 
-const Ast = @import("ast.zig");
-const Environment = @import("environment.zig");
-const Evaluator = @import("evaluator.zig");
-const Builtin = @import("builtin.zig");
+const Ast = @import("Ast.zig");
+const Environment = @import("Environment.zig");
+const Evaluator = @import("Evaluator.zig");
+const builtin = @import("builtin.zig");
 
 pub const Container = union(enum) {
     Value: Value,
@@ -52,7 +52,7 @@ pub const Error = struct {
 
 pub const BuiltinFunction = struct {
     name: []const u8,
-    func: Builtin.Function,
+    func: builtin.Function,
 
     pub fn inspect(self: *const BuiltinFunction, writer: std.io.AnyWriter) !void {
         try writer.print("@{s}(...args)", .{self.name});

@@ -1,7 +1,7 @@
 const std = @import("std");
 
-const Lexer = @import("lexer.zig");
-const Ast = @import("ast.zig");
+const Lexer = @import("Lexer.zig");
+const Ast = @import("Ast.zig");
 
 const Parser = @This();
 const Node = Ast.Node;

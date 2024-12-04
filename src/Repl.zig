@@ -2,11 +2,11 @@ const Repl = @This();
 
 const std = @import("std");
 
-const Lexer = @import("lexer.zig");
-const Parser = @import("parser.zig");
-const Ast = @import("ast.zig");
-const Evaluator = @import("evaluator.zig");
-const Environment = @import("environment.zig");
+const Lexer = @import("Lexer.zig");
+const Parser = @import("Parser.zig");
+const Ast = @import("Ast.zig");
+const Evaluator = @import("Evaluator.zig");
+const Environment = @import("Environment.zig");
 
 const PROMPT = ">> ";
 

@@ -1,10 +1,10 @@
 const std = @import("std");
 
-const Evaluator = @import("evaluator.zig");
-const Object = @import("object.zig");
+const Evaluator = @import("Evaluator.zig");
+const object = @import("object.zig");
 
-const BuiltinFunction = Object.BuiltinFunction;
-const Container = Object.Container;
+const BuiltinFunction = object.BuiltinFunction;
+const Container = object.Container;
 
 const Error = std.mem.Allocator.Error;
 
@@ -115,7 +115,7 @@ fn rest(evaluator: *Evaluator, objects: []const Container) Error!Container {
         .Array => |array| switch (array.values.len) {
             0 => return NULL,
             else => {
-                var temp = Object.Value{ .Array = .{ .values = array.values[1..] } };
+                var temp = object.Value{ .Array = .{ .values = array.values[1..] } };
                 return .{ .Value = try temp.copy(evaluator.allocator) };
             },
         },
@@ -141,7 +141,7 @@ fn push(evaluator: *Evaluator, objects: []const Container) Error!Container {
 
     switch (arg1) {
         .Array => |array| {
-            return .{ .Value = .{ .Array = try Object.Array.initAppend(evaluator.allocator, array.values, objects[1].Value) } };
+            return .{ .Value = .{ .Array = try object.Array.initAppend(evaluator.allocator, array.values, objects[1].Value) } };
         },
         else => return try evaluator.evalError(
             "Builtin signature mismatch. Expected 'Array' as first argument but found '{s}'",

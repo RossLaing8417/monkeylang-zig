@@ -2,14 +2,14 @@ const std = @import("std");
 
 const Evaluator = @This();
 
-const Parser = @import("parser.zig");
-const Lexer = @import("lexer.zig");
-const Ast = @import("ast.zig");
-const Object = @import("object.zig");
-const Environment = @import("environment.zig");
-const Builtin = @import("builtin.zig");
+const Parser = @import("Parser.zig");
+const Lexer = @import("Lexer.zig");
+const Ast = @import("Ast.zig");
+const object = @import("object.zig");
+const Environment = @import("Environment.zig");
+const builtin = @import("builtin.zig");
 
-const Container = Object.Container;
+const Container = object.Container;
 const Error = std.mem.Allocator.Error || std.io.AnyWriter.Error;
 
 const NULL = Container{ .Value = .{ .Null = .{} } };
@@ -188,12 +188,12 @@ fn evalReturnStatement(self: *Evaluator, return_statement: *const Ast.ReturnStat
 
 fn evalIdentifier(self: *Evaluator, identifier: *const Ast.Identifier, environment: *Environment) !Container {
     const result: Container = blk: {
-        if (environment.get(identifier.value)) |object| {
-            break :blk .{ .Value = object.* };
+        if (environment.get(identifier.value)) |obj| {
+            break :blk .{ .Value = obj.* };
         }
 
-        if (Builtin.FunctionMap.get(identifier.value)) |builtin| {
-            break :blk .{ .BuiltinFunction = builtin };
+        if (builtin.FunctionMap.get(identifier.value)) |bltin| {
+            break :blk .{ .BuiltinFunction = bltin };
         }
 
         break :blk try self.evalError("Unknown identifier: '{s}'", .{identifier.value});
@@ -203,7 +203,7 @@ fn evalIdentifier(self: *Evaluator, identifier: *const Ast.Identifier, environme
 }
 
 fn evalArrayLiteral(self: *Evaluator, elements: []const Ast.Node, environment: *Environment) !Container {
-    var results = try std.ArrayList(Object.Value).initCapacity(self.allocator, elements.len);
+    var results = try std.ArrayList(object.Value).initCapacity(self.allocator, elements.len);
     defer {
         for (results.items) |*result| {
             result.deinit(self.allocator);
@@ -349,7 +349,7 @@ fn evalBooleanInfixExpression(self: *Evaluator, operator: Lexer.Token, left_oper
 
 fn evalStringInfixExpression(self: *Evaluator, operator: Lexer.Token, left_operand: []const u8, right_operand: []const u8) !Container {
     const result: Container = switch (operator.type) {
-        .Plus => .{ .Value = .{ .String = try Object.String.initMerge(self.allocator, left_operand, right_operand) } },
+        .Plus => .{ .Value = .{ .String = try object.String.initMerge(self.allocator, left_operand, right_operand) } },
         .Equal => .{ .Value = .{ .Boolean = .{ .value = std.mem.eql(u8, left_operand, right_operand) } } },
         .NotEqual => .{ .Value = .{ .Boolean = .{ .value = !std.mem.eql(u8, left_operand, right_operand) } } },
         else => try self.evalError("Invalid operation: 'String' {s} 'String'", .{operator.literal}),
@@ -494,7 +494,7 @@ fn evalIndexExpression(self: *Evaluator, index_expr: *const Ast.IndexExpression,
     return result;
 }
 
-fn evalBuiltinFunction(self: *Evaluator, builtin: Object.BuiltinFunction, arguments: []const Ast.Node, environment: *Environment) !Container {
+fn evalBuiltinFunction(self: *Evaluator, builtin_fn: object.BuiltinFunction, arguments: []const Ast.Node, environment: *Environment) !Container {
     const result: Container = blk: {
         const args = try self.allocator.alloc(Container, arguments.len);
         defer {
@@ -514,14 +514,14 @@ fn evalBuiltinFunction(self: *Evaluator, builtin: Object.BuiltinFunction, argume
             arg.* = result;
         }
 
-        break :blk try builtin.func(self, args);
+        break :blk try builtin_fn.func(self, args);
     };
     // try debugResult(result, "BuiltinFunction");
     return result;
 }
 
-fn isTruthy(object: Container) bool {
-    switch (object) {
+fn isTruthy(container: Container) bool {
+    switch (container) {
         .Value => |literal| switch (literal) {
             .Integer => |integer| return integer.value != 0,
             .Boolean => |boolean| return boolean.value,
@@ -989,7 +989,7 @@ test "Eval Arrays" {
     const input = [_]TestInput{
         .{ .input = "[1, 2 * 2, 3 + 3]", .expected = .{
             .Value = .{
-                .Array = .{ .values = @constCast(&[_]Object.Value{
+                .Array = .{ .values = @constCast(&[_]object.Value{
                     .{ .Integer = .{ .value = 1 } },
                     .{ .Integer = .{ .value = 4 } },
                     .{ .Integer = .{ .value = 6 } },
@@ -1015,7 +1015,7 @@ test "Eval Arrays" {
             .expected = .{
                 .Value = .{
                     .Array = .{
-                        .values = @constCast(&[_]Object.Value{
+                        .values = @constCast(&[_]object.Value{
                             .{ .Integer = .{ .value = 2 } },
                             .{ .Integer = .{ .value = 4 } },
                             .{ .Integer = .{ .value = 6 } },
@@ -1127,7 +1127,7 @@ fn expectEqualObjects(expected: Container, actual: Container) TestError!void {
     }
 }
 
-fn expectEqualValues(expected: Object.Value, actual: Object.Value) TestError!void {
+fn expectEqualValues(expected: object.Value, actual: object.Value) TestError!void {
     try std.testing.expectEqualStrings(@tagName(expected), @tagName(actual));
     switch (expected) {
         .Null => {},
@@ -1139,14 +1139,14 @@ fn expectEqualValues(expected: Object.Value, actual: Object.Value) TestError!voi
     }
 }
 
-fn expectEqualArrays(expected_values: []const Object.Value, actual_values: []const Object.Value) TestError!void {
+fn expectEqualArrays(expected_values: []const object.Value, actual_values: []const object.Value) TestError!void {
     try std.testing.expectEqual(expected_values.len, actual_values.len);
     for (expected_values, actual_values) |expected, actual| {
         try expectEqualValues(expected, actual);
     }
 }
 
-fn expectEqualFunctions(expected: Object.Function, actual: Object.Function) TestError!void {
+fn expectEqualFunctions(expected: object.Function, actual: object.Function) TestError!void {
     try std.testing.expectEqual(expected.parameters.len, actual.parameters.len);
     for (expected.parameters, actual.parameters) |expected_param, actual_param| {
         try std.testing.expectEqualStrings(expected_param.value, actual_param.value);

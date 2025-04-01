@@ -32,23 +32,23 @@ pub fn loop(self: *Repl) !void {
     var evaluator = try Evaluator.init(self.allocator);
     defer evaluator.deinit();
 
-    var ast_store = std.ArrayList(Ast).init(self.allocator);
+    var ast_store: std.ArrayListUnmanaged(Ast) = .{};
     defer {
         for (ast_store.items) |*ast| {
             self.allocator.free(ast.source);
             ast.deinit(self.allocator);
         }
-        ast_store.deinit();
+        ast_store.deinit(self.allocator);
     }
 
-    var out_buffer = std.ArrayList(u8).init(self.allocator);
-    defer out_buffer.deinit();
+    var out_buffer: std.ArrayListUnmanaged(u8) = .{};
+    defer out_buffer.deinit(self.allocator);
 
-    var in_buffer = std.ArrayList(u8).init(self.allocator);
-    defer in_buffer.deinit();
+    var in_buffer: std.ArrayListUnmanaged(u8) = .{};
+    defer in_buffer.deinit(self.allocator);
 
-    const out_writer = out_buffer.writer().any();
-    const in_writer = in_buffer.writer();
+    const out_writer = out_buffer.writer(self.allocator).any();
+    const in_writer = in_buffer.writer(self.allocator);
 
     while (true) {
         _ = try out_stream.write(PROMPT);
@@ -62,7 +62,7 @@ pub fn loop(self: *Repl) !void {
             continue;
         }
 
-        var ast = try Ast.parse(self.allocator, try in_buffer.toOwnedSlice());
+        var ast = try Ast.parse(self.allocator, try in_buffer.toOwnedSlice(self.allocator));
 
         if (ast.errors.len > 0) {
             defer {
@@ -78,7 +78,7 @@ pub fn loop(self: *Repl) !void {
             continue;
         }
 
-        try ast_store.append(ast);
+        try ast_store.append(self.allocator, ast);
 
         var result = try evaluator.evalAst(&ast, environment);
         defer result.deinit(self.allocator);

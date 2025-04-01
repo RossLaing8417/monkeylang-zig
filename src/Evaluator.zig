@@ -203,12 +203,12 @@ fn evalIdentifier(self: *Evaluator, identifier: *const Ast.Identifier, environme
 }
 
 fn evalArrayLiteral(self: *Evaluator, elements: []const Ast.Node, environment: *Environment) !Container {
-    var results = try std.ArrayList(object.Value).initCapacity(self.allocator, elements.len);
+    var results = try std.ArrayListUnmanaged(object.Value).initCapacity(self.allocator, elements.len);
     defer {
         for (results.items) |*result| {
             result.deinit(self.allocator);
         }
-        results.deinit();
+        results.deinit(self.allocator);
     }
 
     for (elements) |element| {
@@ -217,10 +217,10 @@ fn evalArrayLiteral(self: *Evaluator, elements: []const Ast.Node, environment: *
             return result;
         }
         std.debug.assert(result == .Value);
-        try results.append(result.Value);
+        try results.append(self.allocator, result.Value);
     }
 
-    const result: Container = .{ .Value = .{ .Array = .{ .values = try results.toOwnedSlice() } } };
+    const result: Container = .{ .Value = .{ .Array = .{ .values = try results.toOwnedSlice(self.allocator) } } };
     // try debugResult(result, "ArrayLiteral");
     return result;
 }

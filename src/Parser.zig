@@ -12,8 +12,8 @@ const Error = std.mem.Allocator.Error || std.fmt.AllocPrintError || std.fmt.Pars
 allocator: std.mem.Allocator,
 tokens: []const Token,
 tok_i: usize,
-nodes: std.ArrayList(Node),
-errors: std.ArrayList([]const u8),
+nodes: std.ArrayListUnmanaged(Node),
+errors: std.ArrayListUnmanaged([]const u8),
 
 const Precedence = enum(u8) {
     Lowest,
@@ -28,7 +28,7 @@ const Precedence = enum(u8) {
 
 pub fn parseProgram(self: *Parser) Error!void {
     while (!self.currentTokenIs(.Eof)) {
-        try self.nodes.append(try self.parseStatement());
+        try self.nodes.append(self.allocator, try self.parseStatement());
     }
 }
 
@@ -131,13 +131,13 @@ fn parseIfExpression(self: *Parser) Error!Node {
 }
 
 fn parseCallExpression(self: *Parser, function: Node) Error!Node {
-    var arguments = std.ArrayList(Node).init(self.allocator);
-    defer arguments.deinit();
+    var arguments: std.ArrayListUnmanaged(Node) = .{};
+    defer arguments.deinit(self.allocator);
 
     const token = try self.expectToken(.LeftParen);
 
     while (!self.currentTokenIs(.RightParen)) {
-        try arguments.append(try self.parseExpression(.Lowest));
+        try arguments.append(self.allocator, try self.parseExpression(.Lowest));
         _ = self.consumeToken(.Comma);
     }
 
@@ -147,7 +147,7 @@ fn parseCallExpression(self: *Parser, function: Node) Error!Node {
     call_expression.* = .{
         .token = token,
         .function = function,
-        .arguments = try arguments.toOwnedSlice(),
+        .arguments = try arguments.toOwnedSlice(self.allocator),
     };
 
     return .{ .CallExpression = call_expression };
@@ -170,13 +170,13 @@ fn parseIndexExpression(self: *Parser, expression: Node) Error!Node {
 }
 
 fn parseBlockStatement(self: *Parser) Error!Node {
-    var statements = std.ArrayList(Node).init(self.allocator);
-    defer statements.deinit();
+    var statements: std.ArrayListUnmanaged(Node) = .{};
+    defer statements.deinit(self.allocator);
 
     const token = try self.expectToken(.LeftBrace);
 
     while (!self.currentTokenIs(.RightBrace) and !self.currentTokenIs(.Eof)) {
-        try statements.append(try self.parseStatement());
+        try statements.append(self.allocator, try self.parseStatement());
     }
 
     _ = try self.expectToken(.RightBrace);
@@ -184,7 +184,7 @@ fn parseBlockStatement(self: *Parser) Error!Node {
     const block_statement = try self.allocator.create(Ast.BlockStatement);
     block_statement.* = .{
         .token = token,
-        .statements = try statements.toOwnedSlice(),
+        .statements = try statements.toOwnedSlice(self.allocator),
     };
 
     return .{ .BlockStatement = block_statement };
@@ -274,8 +274,8 @@ fn parseString(self: *Parser) Error!Node {
 }
 
 fn parseFunctionLiteral(self: *Parser) Error!Node {
-    var parameters = std.ArrayList(*Ast.Identifier).init(self.allocator);
-    defer parameters.deinit();
+    var parameters: std.ArrayListUnmanaged(*Ast.Identifier) = .{};
+    defer parameters.deinit(self.allocator);
 
     const token = try self.expectToken(.Function);
     _ = try self.expectToken(.LeftParen);
@@ -289,7 +289,7 @@ fn parseFunctionLiteral(self: *Parser) Error!Node {
             .value = tok.literal,
         };
 
-        try parameters.append(identifier);
+        try parameters.append(self.allocator, identifier);
 
         _ = self.consumeToken(.Comma);
     }
@@ -300,20 +300,20 @@ fn parseFunctionLiteral(self: *Parser) Error!Node {
     function_literal.* = .{
         .token = token,
         .body = (try self.parseBlockStatement()).BlockStatement,
-        .parameters = try parameters.toOwnedSlice(),
+        .parameters = try parameters.toOwnedSlice(self.allocator),
     };
 
     return .{ .FunctionLiteral = function_literal };
 }
 
 fn parseArrayLiteral(self: *Parser) Error!Node {
-    var elements = std.ArrayList(Node).init(self.allocator);
-    defer elements.deinit();
+    var elements: std.ArrayListUnmanaged(Node) = .{};
+    defer elements.deinit(self.allocator);
 
     const token = try self.expectToken(.LeftBracket);
 
     while (!self.currentTokenIs(.RightBracket)) {
-        try elements.append(try self.parseExpression(.Lowest));
+        try elements.append(self.allocator, try self.parseExpression(.Lowest));
         _ = self.consumeToken(.Comma);
     }
 
@@ -322,7 +322,7 @@ fn parseArrayLiteral(self: *Parser) Error!Node {
     const array_literal = try self.allocator.create(Ast.ArrayLiteral);
     array_literal.* = .{
         .token = token,
-        .elements = try elements.toOwnedSlice(),
+        .elements = try elements.toOwnedSlice(self.allocator),
     };
 
     return .{ .ArrayLiteral = array_literal };
@@ -365,7 +365,7 @@ fn nextToken(self: *Parser) Token {
 
 fn expectToken(self: *Parser, token_type: Token.Type) Error!Token {
     if (!self.currentTokenIs(token_type)) {
-        try self.errors.append(try std.fmt.allocPrint(self.allocator, "Expected token '{s}' but got token '{s}' instead", .{
+        try self.errors.append(self.allocator, try std.fmt.allocPrint(self.allocator, "Expected token '{s}' but got token '{s}' instead", .{
             @tagName(token_type),
             @tagName(self.tokens[self.tok_i].type),
         }));
@@ -643,10 +643,10 @@ test "Operator Precedence" {
     };
 
     const allocator = std.testing.allocator;
-    var buffer = std.ArrayList(u8).init(allocator);
-    defer buffer.deinit();
+    var buffer: std.ArrayListUnmanaged(u8) = .{};
+    defer buffer.deinit(allocator);
 
-    const writer = buffer.writer().any();
+    const writer = buffer.writer(allocator).any();
 
     for (tests) |test_entry| {
         buffer.shrinkRetainingCapacity(0);

@@ -5,19 +5,22 @@ const Environment = @This();
 const object = @import("object.zig");
 
 const Value = object.Value;
-const Map = std.StringHashMap(Value);
+const Map = std.StringHashMapUnmanaged(Value);
 
 allocator: std.mem.Allocator,
-store: Map,
+store: *Map,
 outer: ?*Environment,
 ref_count: usize,
 local_functions: usize,
 
 pub fn init(allocator: std.mem.Allocator) !*Environment {
-    var environment = try allocator.create(Environment);
+    const environment = try allocator.create(Environment);
+    errdefer allocator.destroy(environment);
+    const map = try allocator.create(Map);
+    map.* = .{};
     environment.* = .{
         .allocator = allocator,
-        .store = Map.init(allocator),
+        .store = map,
         .outer = null,
         .ref_count = 0,
         .local_functions = 0,
@@ -40,7 +43,8 @@ pub fn deinit(self: *Environment) void {
     while (itr.next()) |value| {
         value.deinit(self.allocator);
     }
-    self.store.deinit();
+    self.store.deinit(self.allocator);
+    self.allocator.destroy(self.store);
     self.allocator.destroy(self);
 }
 
@@ -81,5 +85,5 @@ pub fn set(self: *Environment, name: []const u8, value: Value) !void {
     if (value == .Function and value.Function.environment == self) {
         self.local_functions += 1;
     }
-    try self.store.put(name, value);
+    try self.store.put(self.allocator, name, value);
 }

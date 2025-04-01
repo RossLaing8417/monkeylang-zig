@@ -12,13 +12,13 @@ nodes: []const Node,
 errors: [][]const u8,
 
 pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
-    var tokens = std.ArrayList(Token).init(allocator);
-    defer tokens.deinit();
+    var tokens: std.ArrayListUnmanaged(Token) = .{};
+    defer tokens.deinit(allocator);
 
     var lexer = Lexer.init(source);
     while (true) {
         const token = lexer.nextToken();
-        try tokens.append(token);
+        try tokens.append(allocator, token);
         if (token.type == .Eof) {
             break;
         }
@@ -28,19 +28,19 @@ pub fn parse(allocator: std.mem.Allocator, source: []const u8) !Ast {
         .allocator = allocator,
         .tokens = tokens.items,
         .tok_i = 0,
-        .nodes = std.ArrayList(Node).init(allocator),
-        .errors = std.ArrayList([]const u8).init(allocator),
+        .nodes = .{},
+        .errors = .{},
     };
-    defer parser.nodes.deinit();
-    defer parser.errors.deinit();
+    defer parser.nodes.deinit(allocator);
+    defer parser.errors.deinit(allocator);
 
     try parser.parseProgram();
 
     return .{
         .source = source,
-        .tokens = try tokens.toOwnedSlice(),
-        .nodes = try parser.nodes.toOwnedSlice(),
-        .errors = try parser.errors.toOwnedSlice(),
+        .tokens = try tokens.toOwnedSlice(allocator),
+        .nodes = try parser.nodes.toOwnedSlice(allocator),
+        .errors = try parser.errors.toOwnedSlice(allocator),
     };
 }
 
